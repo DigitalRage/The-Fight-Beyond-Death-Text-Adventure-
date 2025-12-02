@@ -33,7 +33,6 @@ pause_state = False
 #- Return new stats
 #- Display "Level Up!" message
 def level_up(level):
-    global player_stats
     player_stats['defence'] = int(player_stats['defence'] * 1.2)
     player_stats['spirit'] = int(player_stats['spirit'] * 1.2)
     player_stats['attack'] = int(player_stats['attack'] * 1.2)
@@ -102,7 +101,56 @@ def check_collision(x, y):
 #  - Else wait for button press
 #  - If random encounter is triggered then switch game mode to "battle"
 #  - When entering field mode automatically start field background music
-#
+
+while game_mode == "field" and player_alive:
+    if pause_state:
+        print("Game Paused. Press pause button again to resume.")
+        while pause_state:
+            if msvcrt.kbhit():
+                key = msvcrt.getch()
+                if key == b'p':  # assuming 'p' is the pause button
+                    pause_state = False
+                    print("Resuming game.")
+    else:
+        if msvcrt.kbhit():
+            key = msvcrt.getch()
+            if key == b'\xe0':  # arrow keys prefix
+                key2 = msvcrt.getch()  # get the actual arrow key
+                if key == b'w' or key2 == b'H':  # move up
+                    new_x, new_y = player_stats['x'], player_stats['y'] - 1
+                    if check_collision(new_x, new_y):
+                        player_stats['y'] -= 1
+                elif key == b's' or key2 == 'P':  # move down
+                    new_x, new_y = player_stats['x'], player_stats['y'] + 1
+                    if check_collision(new_x, new_y):
+                        player_stats['y'] += 1
+                elif key == b'a' or key2 == b'K':  # move left
+                    new_x, new_y = player_stats['x'] - 1, player_stats['y']
+                    if check_collision(new_x, new_y):
+                        player_stats['x'] -= 1
+                elif key == b'd' or key2 == b'M':  # move right
+                    new_x, new_y = player_stats['x'] + 1, player_stats['y']
+                    if check_collision(new_x, new_y):
+                        player_stats['x'] += 1
+                elif key == b'i':  # interact button
+                    tile_id = get_tile_id(player_stats['x'], player_stats['y'])
+                    if tile_id == "NPC":
+                        print("Starting dialogue with NPC...")
+                    elif tile_id == "chest":
+                        print("Opening chest and adding item to inventory...")
+                    elif tile_id == "door":
+                        print("Transitioning to new map...")
+                elif key == b'=':  # next track
+                    track_index = (track_index + 1) % len(music)
+                    print(f"Playing track {track_index}...")
+                elif key == b'-':  # previous track
+                    track_index = (track_index - 1) % len(music)
+                    print(f"Playing track {track_index}...")
+                elif key == b'm':  # menu button
+                    print("Opening menu...")
+                elif key == b'p':  # pause button
+                    pause
+
 #ENEMY SYSTEM (LIVE ACTION)
 #- Enemy object:
 #  - Name, HP, Attack, Defence, Speed, Aggro range
@@ -131,7 +179,37 @@ def check_collision(x, y):
 #      - Subtract damage from enemy HP
 #      - If HP > 0 then briefly set state is "stunned"
 #      - After stun duration return to chasing
-#
+
+def enemy_update(enemy, player):
+    if enemy['HP'] <= 0:
+        print(f"{enemy['name']} has died.")
+        # Drop rewards here
+    else:
+        distance = ((enemy['x'] - player['x']) ** 2 + (enemy['y'] - player['y']) ** 2) ** 0.5
+        if distance > enemy['aggro_range']:
+            enemy['state'] = 'idle'
+        else:
+            enemy['state'] = 'chasing'
+
+        if enemy['state'] == 'chasing':
+            # Move toward player
+            if enemy['x'] < player['x']:
+                enemy['x'] += enemy['speed']
+            elif enemy['x'] > player['x']:
+                enemy['x'] -= enemy['speed']
+            if enemy['y'] < player['y']:
+                enemy['y'] += enemy['speed']
+            elif enemy['y'] > player['y']:
+                enemy['y'] -= enemy['speed']
+
+            if distance <= 1:  # Assuming 1 unit is close enough to attack
+                enemy['state'] = 'attacking'
+
+        if enemy['state'] == 'attacking':
+            print(f"{enemy['name']} is attacking!")
+            # Handle attack logic here
+            # Reset to chasing after cooldown
+
 #PLAYER DODGE FUNCTION
 #- Input: dodge button press
 #- When pressed:
@@ -139,7 +217,24 @@ def check_collision(x, y):
 #  - Set "invulnerable" flag for short duration (e.g. 0.5 seconds)
 #  - If enemy attack occurs during invulnerable window then no damage taken
 #  - Show dodge animation
-#
+
+def player_dodge(direction):
+    dodge_distance = 2
+    invulnerable_duration = 0.5
+    if direction == 'up':
+        player_stats['y'] -= dodge_distance
+    elif direction == 'down':
+        player_stats['y'] += dodge_distance
+    elif direction == 'left':
+        player_stats['x'] -= dodge_distance
+    elif direction == 'right':
+        player_stats['x'] += dodge_distance
+    player_stats['invulnerable'] = True
+    print("Player dodged!")
+    time.sleep(invulnerable_duration)
+    player_stats['invulnerable'] = False
+    print("Player is no longer invulnerable.")
+
 #BATTLE LOOP
 #- Maintain list of active enemies
 #- For each frame in battle mode:
@@ -149,7 +244,9 @@ def check_collision(x, y):
 #    - Check collisions with player
 #  - If all enemies HP <= 0 then battle ends
 #  - If player HP <= 0 then game over
-#
+
+
+
 #REWARD / EXP SYSTEM
 #- When enemy dies:
 #  - Add EXP to player total
