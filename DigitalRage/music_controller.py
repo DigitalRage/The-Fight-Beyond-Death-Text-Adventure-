@@ -1,114 +1,130 @@
-import winsound
-import msvcrt
 import os
+import winsound
+import subprocess
+import time
 
 class MusicController:
     def __init__(self, tracks):
-        # tracks: dict name->absolute-or-relative-path
-        self.tracks = {k: os.path.abspath(v) for k, v in tracks.items()}
+        # tracks: dict name->path (abs or relative). store absolute paths.
+        self.tracks = {name: os.path.abspath(path) for name, path in (tracks or {}).items()}
         self.track_names = list(self.tracks.keys())
         self.current_track = None
         self.current_path = None
         self.is_paused = False
+        self._ps_proc = None
 
     def _is_wav(self, path):
-        return path.lower().endswith('.wav')
+        return isinstance(path, str) and path.lower().endswith('.wav')
 
-    def play_track(self, name):
+    def _find_by_basename(self, basename):
+        # search script dir and cwd (case-insensitive)
+        for d in (os.path.dirname(__file__), os.getcwd()):
+            try:
+                for f in os.listdir(d):
+                    if f.lower() == basename.lower():
+                        return os.path.join(d, f)
+            except Exception:
+                continue
+        return None
+
+    def _stop_ps(self):
+        if self._ps_proc:
+            try:
+                self._ps_proc.terminate()
+                time.sleep(0.05)
+                if self._ps_proc.poll() is None:
+                    self._ps_proc.kill()
+            except Exception:
+                pass
+            self._ps_proc = None
+
+    def play(self, name):
         if name not in self.tracks:
-            print(f"Track '{name}' not found.")
+            print(f"Track '{name}' not configured.")
             return
         path = self.tracks[name]
         if not os.path.exists(path):
-            print(f"File '{path}' does not exist.")
-            return
+            alt = self._find_by_basename(os.path.basename(path))
+            if alt:
+                path = os.path.abspath(alt)
+                self.tracks[name] = path
+                print(f"Resolved '{name}' -> {path}")
+            else:
+                print(f"File not found for '{name}': {path}")
+                return
+
         if not self._is_wav(path):
-            print(f"winsound supports WAV only. File not played: {path}")
+            print("Only WAV playback supported by this controller:", path)
             return
 
-        self.current_track = name
-        self.current_path = path
-        self.is_paused = False
-        winsound.PlaySound(path, winsound.SND_FILENAME | winsound.SND_ASYNC | winsound.SND_LOOP)
-        print(f"Playing {self.current_track} -> {path}")
+        # stop any current playback
+        self.stop()
+
+        # try winsound async loop
+        try:
+            winsound.PlaySound(path, winsound.SND_FILENAME | winsound.SND_ASYNC | winsound.SND_LOOP)
+            self.current_track = name
+            self.current_path = path
+            self.is_paused = False
+            print(f"Playing (winsound) {name}")
+            return
+        except Exception as e:
+            print("winsound failed:", e)
+
+        # fallback: PowerShell SoundPlayer loop
+        try:
+            safe = path.replace("'", "''")
+            ps_cmd = f"$p=New-Object System.Media.SoundPlayer '{safe}'; $p.PlayLooping(); Start-Sleep -Seconds 999999"
+            self._ps_proc = subprocess.Popen(
+                ["powershell", "-NoProfile", "-WindowStyle", "Hidden", "-Command", ps_cmd],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+            )
+            self.current_track = name
+            self.current_path = path
+            self.is_paused = False
+            print(f"Playing (powershell) {name}")
+        except Exception as e:
+            print("PowerShell fallback failed:", e)
 
     def pause(self):
-        if self.current_track and not self.is_paused:
+        if not self.current_track:
+            print("Nothing is playing.")
+            return
+        # implement pause as stop but remember state for resume
+        try:
             winsound.PlaySound(None, winsound.SND_PURGE)
-            self.is_paused = True
-            print("Playback paused.")
-        else:
-            print("No track is currently playing to pause.")
+        except Exception:
+            pass
+        self._stop_ps()
+        self.is_paused = True
+        print("Paused.")
 
     def resume(self):
-        if self.current_track and self.is_paused:
-            if self.current_path and os.path.exists(self.current_path):
-                winsound.PlaySound(self.current_path, winsound.SND_FILENAME | winsound.SND_ASYNC | winsound.SND_LOOP)
-                self.is_paused = False
-                print(f"Resumed {self.current_track}.")
-            else:
-                print("Cannot resume: file missing.")
-        else:
+        if not self.current_track or not self.is_paused:
             print("Nothing to resume.")
+            return
+        if not self.current_path or not os.path.exists(self.current_path):
+            print("Cannot resume: file missing.")
+            return
+        self.is_paused = False
+        self.play(self.current_track)
+        print("Resumed.")
 
     def stop(self):
-        if self.current_track:
+        # stop all playback
+        try:
             winsound.PlaySound(None, winsound.SND_PURGE)
-            print("Playback stopped.")
-            self.current_track = None
-            self.current_path = None
-            self.is_paused = False
-        else:
-            print("No track is currently playing.")
+        except Exception:
+            pass
+        self._stop_ps()
+        self.current_track = None
+        self.current_path = None
+        self.is_paused = False
+        print("Stopped.")
 
     def list_tracks(self):
-        for i, name in enumerate(self.track_names):
-            print(f"{i+1}. {name} -> {self.tracks[name]}")
-
-    def track_mode(self):
-        print("Track mode: '=' next, '-' prev, 'p' pause, 'r' resume, 's' stop, Backspace to exit")
         if not self.track_names:
-            print("No tracks available.")
+            print("No tracks configured.")
             return
-        if self.current_track is None:
-            self.play_track(self.track_names[0])
-        while True:
-            if msvcrt.kbhit():
-                key = msvcrt.getch()
-                try:
-                    ch = key.decode('utf-8')
-                except Exception:
-                    ch = ''
-                if ch == '=':
-                    self._next_track()
-                elif ch == '-':
-                    self._prev_track()
-                elif ch.lower() == 'p':
-                    self.pause()
-                elif ch.lower() == 'r':
-                    self.resume()
-                elif ch.lower() == 's':
-                    self.stop()
-                elif key == b'\x08':  # Backspace
-                    print("Exiting track mode.")
-                    break
-
-    def _next_track(self):
-        if not self.track_names:
-            return
-        if self.current_track and self.current_track in self.track_names:
-            idx = self.track_names.index(self.current_track)
-            new_idx = (idx + 1) % len(self.track_names)
-        else:
-            new_idx = 0
-        self.play_track(self.track_names[new_idx])
-
-    def _prev_track(self):
-        if not self.track_names:
-            return
-        if self.current_track and self.current_track in self.track_names:
-            idx = self.track_names.index(self.current_track)
-            new_idx = (idx - 1) % len(self.track_names)
-        else:
-            new_idx = 0
-        self.play_track(self.track_names[new_idx])
+        for i, name in enumerate(self.track_names, start=1):
+            print(f"{i}. {name} -> {self.tracks.get(name)}")
