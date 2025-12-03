@@ -61,6 +61,6 @@ while True:
     elif op == "next":
         controller.next_track()
     elif op == "prev":
-        controller.previous_track()
+        controller.prev_track()
     else:
         print("Unknown command.")

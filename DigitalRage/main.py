@@ -5,6 +5,43 @@
 import os, time, msvcrt, json
 from music_controller import MusicController
 
+SAVE_FILE = "save.json"
+
+def save_game():
+    game_data = {
+        "player_stats": player_stats,
+        "inventory": inventory,
+        "game_mode": game_mode,
+        "tiles": tiles,
+        "current_track": controller.current_track
+    }
+    try:
+        with open(SAVE_FILE, "w") as file:
+            json.dump(game_data, file, indent=4)
+        print("Game saved successfully.")
+    except Exception as error:
+        print("Error saving game:", error)
+
+
+def load_game():
+    global player_stats, inventory, game_mode, tiles
+    try:
+        with open(SAVE_FILE, "r") as file:
+            game_data = json.load(file)
+        player_stats = game_data.get("player_stats", player_stats)
+        inventory = game_data.get("inventory", [])
+        game_mode = game_data.get("game_mode", "field")
+        tiles = game_data.get("tiles", [])
+        track = game_data.get("current_track")
+        if track:
+            controller.play(track)
+        print("Game loaded successfully.")
+    except FileNotFoundError:
+        print("No save file found.")
+    except Exception as error:
+        print("Error loading game:", error)
+
+
 #Music runner function
 #- Input: music track name
 #- Use Music Controller to play track
@@ -21,6 +58,34 @@ def locate_music_file(name, base_dir):
         if os.path.splitext(f)[0].lower() == base_no_ext:
             return os.path.join(base_dir, f)
     return None
+
+def mp3_player_menu():
+    track_names = list(tracks.keys())
+    selected = 0
+
+    while True:
+        print("\n=== MP3 Player ===")
+        for i, name in enumerate(track_names):
+            if i == selected:
+                print(f"> {name}")
+            else:
+                print(f"  {name}")
+        print("Press Enter to play, Esc to exit MP3 Player.")
+
+        key = msvcrt.getch()
+
+        if key == b'\xe0':  # arrow keys
+            key2 = msvcrt.getch()
+            if key2 == b'H':  # Up
+                selected = (selected - 1) % len(track_names)
+            elif key2 == b'P':  # Down
+                selected = (selected + 1) % len(track_names)
+        elif key == b'\r':  # Enter
+            controller.play(track_names[selected])
+        elif key == b'\x1b':  # Esc key
+            print("Closing MP3 Player...")
+            break
+
 
 #LEVEL UP FUNCTION
 #- Input: level number
@@ -85,10 +150,63 @@ def check_collision(x, y):
 
 frame_tiles = {}
 character_sprites = {'walk': {}, 'attack': {}, 'dodge': {}}
-player_stats = {'defence': 10, 'spirit': 10, 'attack': 10, 'magic': 10, 'mana': 50, 'HP': 100, 'EXP': 0, 'Level': 1, 'Munny': 0}
+player_stats = {
+    'defence': 10, 'spirit': 10, 'attack': 10, 'magic': 10,
+    'mana': 50, 'HP': 100, 'EXP': 0, 'Level': 1, 'Munny': 0,
+    'x': 0, 'y': 0, 'invulnerable': False
+}
 game_mode = "field"
 player_alive = True
 tiles = []
+inventory = []
+pause_state = False
+
+# === START MENU ===
+
+def start_menu():
+    options = ["Start New Game", "Load Saved Game", "MP3 Player", "Quit"]
+    selected = 0
+
+    while True:
+        print("\n=== The Fight Beyond Death ===")
+        for i, option in enumerate(options):
+            if i == selected:
+                print(f"> {option}")  # highlight selected
+            else:
+                print(f"  {option}")
+
+        key = msvcrt.getch()
+
+        if key == b'\xe0':  # arrow keys
+            key2 = msvcrt.getch()
+            if key2 == b'H':  # Up
+                selected = (selected - 1) % len(options)
+            elif key2 == b'P':  # Down
+                selected = (selected + 1) % len(options)
+        elif key == b'\r':  # Enter
+            return selected
+
+choice = start_menu()
+
+choice = start_menu()
+
+if choice == 0:  # Start New Game
+    print("Starting new game...")
+    # reset stats, inventory, etc.
+elif choice == 1:  # Load Saved Game
+    try:
+        load_game()
+        print("Loaded previous save file.")
+    except FileNotFoundError:
+        print("No save file found. Starting new game instead.")
+elif choice == 2:  # MP3 Player
+    print("Opening MP3 Player...")
+    mp3_player_menu()
+elif choice == 3:  # Quit
+    print("Goodbye!")
+    exit()
+
+
 
 this_dir = os.path.dirname(os.path.abspath(__file__))
 
@@ -110,7 +228,7 @@ for key, fname in requested.items():
 controller = MusicController(tracks)
 controller.list_tracks()
 
-print("Commands: play <name>, pause, resume, stop, list, quit")
+print("Commands: play <name>, pause, resume, stop, list, quit, next, prev, save, load")
 while True:
     try:
         cmd = input("> ").strip().split(maxsplit=1)
@@ -120,6 +238,7 @@ while True:
         continue
     op = cmd[0].lower()
     arg = cmd[1].strip() if len(cmd) > 1 else None
+
     if op == "play" and arg:
         controller.play(arg)
     elif op == "pause":
@@ -131,8 +250,17 @@ while True:
     elif op == "list":
         controller.list_tracks()
     elif op == "quit":
+        save_game()          # auto-save on quit
         controller.stop()
         break
+    elif op == "next":
+        controller.next_track()
+    elif op == "prev":
+        controller.prev_track()
+    elif op == "save":
+        save_game()
+    elif op == "load":
+        load_game()
     else:
         print("Unknown command.")
 
@@ -174,13 +302,15 @@ while game_mode == "field" and player_alive:
     else:
         if msvcrt.kbhit():
             key = msvcrt.getch()
+
+            # Movement keys
             if key == b'\xe0':  # arrow keys prefix
                 key2 = msvcrt.getch()  # get the actual arrow key
                 if key == b'w' or key2 == b'H':  # move up
                     new_x, new_y = player_stats['x'], player_stats['y'] - 1
                     if check_collision(new_x, new_y):
                         player_stats['y'] -= 1
-                elif key == b's' or key2 == 'P':  # move down
+                elif key == b's' or key2 == b'P':  # move down
                     new_x, new_y = player_stats['x'], player_stats['y'] + 1
                     if check_collision(new_x, new_y):
                         player_stats['y'] += 1
@@ -192,14 +322,23 @@ while game_mode == "field" and player_alive:
                     new_x, new_y = player_stats['x'] + 1, player_stats['y']
                     if check_collision(new_x, new_y):
                         player_stats['x'] += 1
-                elif key == b'i':  # interact button
-                    tile_id = get_tile_id(player_stats['x'], player_stats['y'])
-                    if tile_id == "NPC":
-                        print("Starting dialogue with NPC...")
-                    elif tile_id == "chest":
-                        print("Opening chest and adding item to inventory...")
-                    elif tile_id == "door":
-                        print("Transitioning to new map...")
+
+            # Interaction key
+            elif key == b'i':
+                tile_id = get_tile_id(player_stats['x'], player_stats['y'])
+                if tile_id == "NPC":
+                    print("Starting dialogue with NPC...")
+                elif tile_id == "chest":
+                    print("Opening chest and adding item to inventory...")
+                elif tile_id == "door":
+                    print("Transitioning to new map...")
+
+            # Music switching keys
+            elif key == b'=':  # next track
+                controller.next_track()
+            elif key == b'-':  # previous track
+                controller.prev_track()
+
                     
 #ENEMY SYSTEM (LIVE ACTION)
 #- Enemy object:

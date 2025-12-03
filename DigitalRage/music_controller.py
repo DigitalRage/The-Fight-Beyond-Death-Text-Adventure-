@@ -1,3 +1,4 @@
+#music_controller.py
 import os
 import winsound
 import subprocess
@@ -130,7 +131,7 @@ class MusicController:
             print(f"{i}. {name} -> {self.tracks.get(name)}")
 
     
-    def next_track(self, i):
+    def next_track(self):
         if not self.track_names:
             print("No tracks configured.")
             return
@@ -138,9 +139,18 @@ class MusicController:
             print("No current track to advance from.")
             return
         current_index = self.track_names.index(self.current_track)
-        next_index = (current_index + i) % len(self.track_names)
+        next_index = (current_index + 1) % len(self.track_names)
         next_name = self.track_names[next_index]
         self.play(next_name)
 
     def prev_track(self):
-        self.next_track(-1)
+        if not self.track_names:
+            print("No tracks configured.")
+            return
+        if self.current_track not in self.track_names:
+            print("No current track to go back from.")
+            return
+        current_index = self.track_names.index(self.current_track)
+        prev_index = (current_index - 1) % len(self.track_names)
+        prev_name = self.track_names[prev_index]
+        self.play(prev_name)
