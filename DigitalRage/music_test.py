@@ -3,7 +3,7 @@ from music_controller import MusicController
 
 this_dir = os.path.dirname(os.path.abspath(__file__))
 
-def locate_file(name, base_dir):
+def locate_music_file(name, base_dir):
     p = os.path.join(base_dir, name)
     if os.path.exists(p):
         return os.path.abspath(p)
@@ -25,7 +25,7 @@ requested = {
 
 tracks = {}
 for key, fname in requested.items():
-    found = locate_file(fname, this_dir)
+    found = locate_music_file(fname, this_dir)
     if found:
         tracks[key] = found
         print(f"Found {key}: {found}")
@@ -35,7 +35,7 @@ for key, fname in requested.items():
 controller = MusicController(tracks)
 controller.list_tracks()
 
-print("Commands: play <name>, pause, resume, stop, list, quit")
+print("Commands: play <name>, pause, resume, stop, list, next, prev, quit")
 while True:
     try:
         cmd = input("> ").strip().split(maxsplit=1)
@@ -58,5 +58,9 @@ while True:
     elif op == "quit":
         controller.stop()
         break
+    elif op == "next":
+        controller.next_track()
+    elif op == "prev":
+        controller.previous_track()
     else:
         print("Unknown command.")

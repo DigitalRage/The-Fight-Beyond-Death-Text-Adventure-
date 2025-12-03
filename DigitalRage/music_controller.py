@@ -18,11 +18,11 @@ class MusicController:
 
     def _find_by_basename(self, basename):
         # search script dir and cwd (case-insensitive)
-        for d in (os.path.dirname(__file__), os.getcwd()):
+        for i in (os.path.dirname(__file__), os.getcwd()):
             try:
-                for f in os.listdir(d):
-                    if f.lower() == basename.lower():
-                        return os.path.join(d, f)
+                for item in os.listdir(i):
+                    if item.lower() == basename.lower():
+                        return os.path.join(i, item)
             except Exception:
                 continue
         return None
@@ -68,8 +68,8 @@ class MusicController:
             self.is_paused = False
             print(f"Playing (winsound) {name}")
             return
-        except Exception as e:
-            print("winsound failed:", e)
+        except Exception as stuff:
+            print("winsound failed:", stuff)
 
         # fallback: PowerShell SoundPlayer loop
         try:
@@ -83,8 +83,8 @@ class MusicController:
             self.current_path = path
             self.is_paused = False
             print(f"Playing (powershell) {name}")
-        except Exception as e:
-            print("PowerShell fallback failed:", e)
+        except Exception as stuff:
+            print("PowerShell fallback failed:", stuff)
 
     def pause(self):
         if not self.current_track:
@@ -128,3 +128,19 @@ class MusicController:
             return
         for i, name in enumerate(self.track_names, start=1):
             print(f"{i}. {name} -> {self.tracks.get(name)}")
+
+    
+    def next_track(self, i):
+        if not self.track_names:
+            print("No tracks configured.")
+            return
+        if self.current_track not in self.track_names:
+            print("No current track to advance from.")
+            return
+        current_index = self.track_names.index(self.current_track)
+        next_index = (current_index + i) % len(self.track_names)
+        next_name = self.track_names[next_index]
+        self.play(next_name)
+
+    def prev_track(self):
+        self.next_track(-1)

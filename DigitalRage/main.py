@@ -5,28 +5,22 @@
 import os, time, msvcrt, json
 from music_controller import MusicController
 
-#- Define variables:
-#  - Frame tiles
-#  - Character sprites (walk, attack, dodge in 4 directions)
-#  - Player stats (defence, spirit, attack, magic, mana, HP, EXP, Level, Munny(cash))
-#  - Game mode is "field" at start
-#  - Player alive is true
-#  - Tiles is list of tiles for map
-#  - Music tracks is in dictionary of track names and file paths
-#  - Current track is none
-#  - Track index is 0
-#  - Pause state is false
-
-frame_tiles = {}
-character_sprites = {'walk': {}, 'attack': {}, 'dodge': {}}
-player_stats = {'defence': 10, 'spirit': 10, 'attack': 10, 'magic': 10, 'mana': 50, 'HP': 100, 'EXP': 0, 'Level': 1, 'Munny': 0}
-game_mode = "field"
-player_alive = True
-tiles = []
-music = {}
-current_track = None
-track_index = 0
-pause_state = False
+#Music runner function
+#- Input: music track name
+#- Use Music Controller to play track
+def locate_music_file(name, base_dir):
+    p = os.path.join(base_dir, name)
+    if os.path.exists(p):
+        return os.path.abspath(p)
+    target = name.lower()
+    for f in os.listdir(base_dir):
+        if f.lower() == target:
+            return os.path.join(base_dir, f)
+    base_no_ext = os.path.splitext(name)[0].lower()
+    for f in os.listdir(base_dir):
+        if os.path.splitext(f)[0].lower() == base_no_ext:
+            return os.path.join(base_dir, f)
+    return None
 
 #LEVEL UP FUNCTION
 #- Input: level number
@@ -76,6 +70,71 @@ def check_collision(x, y):
     if tile_id in ["wall", "blocked"]:
         return False
     return True
+
+#- Define variables:
+#  - Frame tiles
+#  - Character sprites (walk, attack, dodge in 4 directions)
+#  - Player stats (defence, spirit, attack, magic, mana, HP, EXP, Level, Munny(cash))
+#  - Game mode is "field" at start
+#  - Player alive is true
+#  - Tiles is list of tiles for map
+#  - Music tracks is in dictionary of track names and file paths
+#  - Current track is none
+#  - Track index is 0
+#  - Pause state is false
+
+frame_tiles = {}
+character_sprites = {'walk': {}, 'attack': {}, 'dodge': {}}
+player_stats = {'defence': 10, 'spirit': 10, 'attack': 10, 'magic': 10, 'mana': 50, 'HP': 100, 'EXP': 0, 'Level': 1, 'Munny': 0}
+game_mode = "field"
+player_alive = True
+tiles = []
+
+this_dir = os.path.dirname(os.path.abspath(__file__))
+
+requested = {
+    "battle": "Organization Battle.wav",
+    "town": "Twilight Town.wav",
+    "destiny": "Destiny Islands.wav"
+}
+
+tracks = {}
+for key, fname in requested.items():
+    found = locate_music_file(fname, this_dir)
+    if found:
+        tracks[key] = found
+        print(f"Found {key}: {found}")
+    else:
+        print(f"Missing {key}: tried '{fname}' in {this_dir}")
+
+controller = MusicController(tracks)
+controller.list_tracks()
+
+print("Commands: play <name>, pause, resume, stop, list, quit")
+while True:
+    try:
+        cmd = input("> ").strip().split(maxsplit=1)
+    except (EOFError, KeyboardInterrupt):
+        break
+    if not cmd:
+        continue
+    op = cmd[0].lower()
+    arg = cmd[1].strip() if len(cmd) > 1 else None
+    if op == "play" and arg:
+        controller.play(arg)
+    elif op == "pause":
+        controller.pause()
+    elif op == "resume":
+        controller.resume()
+    elif op == "stop":
+        controller.stop()
+    elif op == "list":
+        controller.list_tracks()
+    elif op == "quit":
+        controller.stop()
+        break
+    else:
+        print("Unknown command.")
 
 #FIELD MODE
 #- While player is alive and game mode is "field":
@@ -141,17 +200,7 @@ while game_mode == "field" and player_alive:
                         print("Opening chest and adding item to inventory...")
                     elif tile_id == "door":
                         print("Transitioning to new map...")
-                elif key == b'=':  # next track
-                    track_index = (track_index + 1) % len(music)
-                    print(f"Playing track {track_index}...")
-                elif key == b'-':  # previous track
-                    track_index = (track_index - 1) % len(music)
-                    print(f"Playing track {track_index}...")
-                elif key == b'm':  # menu button
-                    print("Opening menu...")
-                elif key == b'p':  # pause button
-                    pause
-
+                    
 #ENEMY SYSTEM (LIVE ACTION)
 #- Enemy object:
 #  - Name, HP, Attack, Defence, Speed, Aggro range
@@ -303,20 +352,6 @@ def player_dodge(direction):
 #  - Fade in field screen
 #  - Resume field background music
 # Build absolute paths to all files
-
-
-this_dir = os.path.dirname(os.path.abspath(__file__))
-tracks = {
-    "battle": os.path.join(this_dir, "Organization Battle.wav"),
-    "town": os.path.join(this_dir, "Twilight Town.wav"),
-    "destiny": os.path.join(this_dir, "Destiny Islands.wav")
-}
-
-music = MusicController(tracks)
-
-# Example usage
-music.play_track("battle")
-
 
 #BATTLE MODE
 #- While player is alive and game mode is "battle":
