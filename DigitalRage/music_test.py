@@ -104,7 +104,7 @@ while True:
     elif op == "list":
         controller.list_tracks()
     elif op == "status":
-        status()
+        controller.status()
     elif op == "quit":
         controller.stop()
         controller.stop1()

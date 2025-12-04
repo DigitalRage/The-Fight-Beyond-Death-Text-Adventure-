@@ -247,16 +247,48 @@ while True:
         controller.resume()
     elif op == "stop":
         controller.stop()
-    elif op == "list":
-        controller.list_tracks()
-    elif op == "quit":
-        save_game()          # auto-save on quit
-        controller.stop()
-        break
     elif op == "next":
         controller.next_track()
     elif op == "prev":
         controller.prev_track()
+
+    elif op == "play1" and arg:
+        controller.play1(arg)
+    elif op == "pause1":
+        controller.pause1()
+    elif op == "resume1":
+        controller.resume1()
+    elif op == "stop1":
+        controller.stop1()
+    elif op == "next1":
+        controller.next1()
+    elif op == "prev1":
+        controller.prev1()
+
+    elif op == "play2" and arg:
+        controller.play2(arg)
+    elif op == "pause2":
+        controller.pause2()
+    elif op == "resume2":
+        controller.resume2()
+    elif op == "stop2":
+        controller.stop2()
+    elif op == "next2":
+        controller.next2()
+    elif op == "prev2":
+        controller.prev2()
+
+    elif op == "status": 
+        controller.status()
+    elif op == "list":
+        controller.list_tracks()
+    elif op == "status":
+        controller.status()
+    elif op == "quit":
+        controller.stop()
+        controller.stop1()
+        controller.stop2()
+        break
     elif op == "save":
         save_game()
     elif op == "load":
