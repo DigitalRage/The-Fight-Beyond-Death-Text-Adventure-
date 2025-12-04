@@ -356,5 +356,24 @@ class MusicController:
         print(f"Channel2: {self.current_track2 or 'stopped'}{' (paused)' if self.is_paused2 else ''}")
         print(f"Channel3: {self.current_track3 or 'stopped'}{' (paused)' if self.is_paused3 else ''}")
 
+    def stop_all(self):
+        #Stop playback on all channels.
+        self.stop()
+        self.stop1()
+        self.stop2()
+        self.stop3()
+        print("Stopped all channels.")
 
-        
+    def get_track_index(self):
+        #Return index of current track in track_names, or None if not playing.
+        if self.current_track and self.current_track in self.track_names:
+            return self.track_names.index(self.current_track)
+        return None
+
+    def set_track_by_index(self, index):
+        #Play track by index if valid.
+        if 0 <= index < len(self.track_names):
+            name = self.track_names[index]
+            self.play(name)
+        else:
+            print("Invalid track index.")
