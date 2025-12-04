@@ -2,7 +2,7 @@
 
 #SETUP
 #- Import libraries: os, time, winsound, mscrt, save (My Save File), music controller (music playback)
-import os, time, msvcrt, json
+import os, time, random, msvcrt, json
 from music_controller import MusicController
 
 SAVE_FILE = "save.json"
@@ -278,6 +278,19 @@ while True:
     elif op == "prev2":
         controller.prev2()
 
+    elif op == "play3" and arg:
+        controller.play3(arg)
+    elif op == "pause3":
+        controller.pause3()
+    elif op == "resume3":
+        controller.resume3()
+    elif op == "stop3":
+        controller.stop3()
+    elif op == "next3":
+        controller.next3()
+    elif op == "prev3":
+        controller.prev3()
+
     elif op == "status": 
         controller.status()
     elif op == "list":
@@ -466,7 +479,22 @@ def player_dodge(direction):
 #  - If all enemies HP <= 0 then battle ends
 #  - If player HP <= 0 then game over
 
+current_enemies = []
+while game_mode == "battle" and player_alive:
+    # Handle player input here
 
+    for enemy in current_enemies:
+        enemy_update(enemy, player_stats)
+        # Check collisions with player here
+
+    if all(enemy['HP'] <= 0 for enemy in current_enemies):
+        print("Battle won!")
+        game_mode = "field"  # Switch back to field mode
+
+    if player_stats['HP'] <= 0:
+        print("Game Over!")
+        player_alive = False
+        # Handle game over logic here
 
 #REWARD / EXP SYSTEM
 #- When enemy dies:
@@ -477,7 +505,25 @@ def player_dodge(direction):
 #- After battle:
 #  - Check if player EXP >= level threshold
 #  - If yes then call Level Up Function
-#
+
+if game_mode == "battle" and all(enemy['HP'] <= 0 for enemy in current_enemies):
+    total_exp = sum(enemy['exp_reward'] for enemy in current_enemies)
+    total_munny = sum(enemy['munny_reward'] for enemy in current_enemies)
+    player_stats['EXP'] += total_exp
+    player_stats['Munny'] += total_munny
+    print(f"Gained {total_exp} EXP and {total_munny} Munny!")
+
+    for enemy in current_enemies:
+        if 'item_drop' in enemy:
+            inventory.append(enemy['item_drop'])
+            print(f"Received item: {enemy['item_drop']}")
+
+    level_threshold = player_stats['Level'] * 100  # Example threshold
+    if player_stats['EXP'] >= level_threshold:
+        level_up(player_stats['Level'])
+
+    game_mode = "field"  # Switch back to field mode
+
 #SAVE / LOAD SYSTEM
 #- Save function:
 #  - Store player stats, inventory, current map, position, and track index
@@ -489,19 +535,9 @@ def player_dodge(direction):
 #- Menu option:
 #  - "Save" calls Save function
 #  - "Load" calls Load function
-#
-#UI SYSTEM (HP/MP BARS)
-#- Player UI:
-#  - Display HP bar above player sprite
-#  - Display MP bar below HP bar
-#  - Update bars every frame based on current values
-#- Enemy UI:
-#  - Display HP bar above each enemy sprite
-#  - Update bar every frame based on enemy HP
-#- Pause overlay:
-#  - When pause state is true, show "Game Paused" overlay
-#  - Hide overlay when pause state is false
-#
+
+
+
 #CAMERA / VIEWPORT SYSTEM
 #- Camera follows player position
 #- Field mode:
@@ -510,7 +546,9 @@ def player_dodge(direction):
 #- Battle mode:
 #  - Center camera on battle arena
 #  - Keep all enemies and player visible
-#
+
+
+
 #BATTLE TRANSITION SYSTEM
 #- When random encounter triggered:
 #  - Fade out field screen
@@ -523,6 +561,8 @@ def player_dodge(direction):
 #  - Fade in field screen
 #  - Resume field background music
 # Build absolute paths to all files
+
+
 
 #BATTLE MODE
 #- While player is alive and game mode is "battle":
@@ -545,10 +585,22 @@ def player_dodge(direction):
 #    - Else if load save button is pressed then load last save file and return to field mode
 #    - Else end game loop
 #  - When entering battle mode automatically start battle background music
-#
+
+
+
 #GAME LOOP
 #- Start in field mode
 #- While game is running:
 #  - If mode is "field" then run field mode loop
 #  - Else if mode is "battle" then run battle mode loop
 #  - Else if mode is "end game" then end game
+while True:
+    if game_mode == "field":
+        # Run field mode loop
+        pass
+    elif game_mode == "battle":
+        # Run battle mode loop
+        pass
+    elif game_mode == "end game":
+        print("Thank you for playing!")
+        break

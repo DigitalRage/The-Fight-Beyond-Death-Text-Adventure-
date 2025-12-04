@@ -27,6 +27,15 @@ class MusicController:
         self.is_paused2 = False
         self._ps_proc2 = None
 
+
+        
+        # channel 3
+        self.current_track3 = None
+        self.current_path3 = None
+        self.is_paused3 = False
+        self._ps_proc3 = None
+
+
         self._powershell = shutil.which("powershell") or shutil.which("powershell.exe")
 
     def _is_wav(self, path):
@@ -266,6 +275,73 @@ class MusicController:
         prev_name = self.track_names[(idx - 1) % len(self.track_names)]
         self.play2(prev_name)
 
+
+
+    # --- Channel 3 ---
+    def play3(self, name):
+        if name not in self.tracks:
+            print(f"Track '{name}' not configured.")
+            return
+        path = self.tracks[name]
+        if not os.path.exists(path):
+            print(f"File not found for '{name}': {path}")
+            return
+        if not self._is_wav(path):
+            print("Only WAV supported:", path)
+            return
+        self._stop_proc("_ps_proc3")
+        proc = self._launch_ps_loop(path, "3")
+        if proc:
+            self._ps_proc3 = proc
+            self.current_track3 = name
+            self.current_path3 = path
+            self.is_paused3 = False
+            print(f"Playing track3: {name}")
+
+    def pause3(self):
+        if not self.current_track3:
+            print("Nothing is playing on channel 3.")
+            return
+        self._stop_proc("_ps_proc3")
+        self.is_paused3 = True
+        print("Paused channel 3.")
+
+    def resume3(self):
+        if not self.current_track3 or not self.is_paused3:
+            print("Nothing to resume on channel 3.")
+            return
+        if not self.current_path3 or not os.path.exists(self.current_path3):
+            print("Cannot resume channel 3: file missing.")
+            return
+        self.is_paused3 = False
+        self.play3(self.current_track3)
+        print("Resumed channel 3.")
+
+    def stop3(self):
+        self._stop_proc("_ps_proc3")
+        self.current_track3 = None
+        self.current_path3 = None
+        self.is_paused3 = False
+        print("Stopped channel 3.")
+
+    def next3(self):
+        if not self.track_names or self.current_track3 not in self.track_names:
+            print("No current track on channel 3 to advance from.")
+            return
+        idx = self.track_names.index(self.current_track3)
+        next_name = self.track_names[(idx + 1) % len(self.track_names)]
+        self.play3(next_name)
+
+    def prev3(self):
+        if not self.track_names or self.current_track3 not in self.track_names:
+            print("No current track on channel 3 to go back from.")
+            return
+        idx = self.track_names.index(self.current_track3)
+        prev_name = self.track_names[(idx - 1) % len(self.track_names)]
+        self.play3(prev_name)
+
+
+    # --- Utility Methods ---
     def list_tracks(self):
         if not self.track_names:
             print("No tracks configured.")
@@ -278,3 +354,7 @@ class MusicController:
         print(f"Main: {self.current_track or 'stopped'}{' (paused)' if self.is_paused else ''}")
         print(f"Channel1: {self.current_track1 or 'stopped'}{' (paused)' if self.is_paused1 else ''}")
         print(f"Channel2: {self.current_track2 or 'stopped'}{' (paused)' if self.is_paused2 else ''}")
+        print(f"Channel3: {self.current_track3 or 'stopped'}{' (paused)' if self.is_paused3 else ''}")
+
+
+        

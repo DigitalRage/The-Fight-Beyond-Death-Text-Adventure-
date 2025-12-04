@@ -99,6 +99,19 @@ while True:
     elif op == "prev2":
         controller.prev2()
 
+    elif op == "play3" and arg:
+        controller.play3(arg)
+    elif op == "pause3":
+        controller.pause3()
+    elif op == "resume3":
+        controller.resume3()
+    elif op == "stop3":
+        controller.stop3()
+    elif op == "next3":
+        controller.next3()
+    elif op == "prev3":
+        controller.prev3()
+
     elif op == "status": 
         controller.status()
     elif op == "list":
