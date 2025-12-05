@@ -59,6 +59,9 @@ def locate_music_file(name, base_dir):
             return os.path.join(base_dir, f)
     return None
 
+def clear_screen():
+    os.system('cls') #Cleans the console screen
+
 def mp3_player_menu(controller):
     # Display configured track keys (e.g., "battle", "town", "destiny")
     track_names = list(controller.tracks.keys())
@@ -68,7 +71,7 @@ def mp3_player_menu(controller):
 
     selected = 0
     while True:
-        print("\n=== MP3 Player ===")
+        print("\n\033c=== MP3 Player ===")
         for i, name in enumerate(track_names):
             print(f"{'> ' if i == selected else '  '}{name}")
         print("Enter=Play, Esc=Exit, Up/Down=Navigate")
@@ -136,7 +139,7 @@ def start_menu():
     selected = 0
 
     while True:
-        print("\n=== The Fight Beyond Death ===")
+        print("\n\033c=== The Fight Beyond Death ===")
         for i, option in enumerate(options):
             print(f"{'> ' if i == selected else '  '}{option}")
 
@@ -411,7 +414,7 @@ def in_game_menu(player_stats, inventory, controller):
     options = ["Resume", "Items", "Save", "Load", "MP3 Player", "Status", "Quit to Title"]
     selected = 0
     while True:
-        print("\n=== Menu ===")
+        print("\n\033c=== Menu ===")
         for i, option in enumerate(options):
             print(f"{'> ' if i == selected else '  '}{option}")
         key = msvcrt.getch()
@@ -658,7 +661,9 @@ def main():
     requested = {
         "battle": "Organization Battle.wav",
         "town": "Twilight Town.wav",
-        "destiny": "Destiny Islands.wav"
+        "destiny": "Destiny Islands.wav",
+        "final1": "KH-CoM Final Battle 1.wav",
+        "final2": "KH-CoM Final Battle 2.wav"
     }
     tracks = {}
     for key, fname in requested.items():
