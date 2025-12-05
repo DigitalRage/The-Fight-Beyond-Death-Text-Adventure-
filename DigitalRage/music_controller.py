@@ -5,6 +5,7 @@ import time
 import shutil
 
 class MusicController:
+    # --- Basic Checks ---
     def __init__(self, tracks):
         self.tracks = {name: os.path.abspath(path) for name, path in (tracks or {}).items()}
         self.track_names = list(self.tracks.keys())
