@@ -517,7 +517,712 @@ def battle_mode(player_stats, inventory, controller):
         if action is None:
             # Update enemies even when idle
             for e in current_enemies:
-                enemy_update(e, player_stats)
+                # BB 1st Final Project, The Fight Beyond Death: Text Adventure
+
+                # SETUP
+
+                SAVE_FILE = "save.json"
+
+                # === Utility: Input mapping (msvcrt) ===
+                def read_action():
+                    if not msvcrt.kbhit():
+                        return None
+                    key = msvcrt.getch()
+                    if key == b'\xe0':  # arrow keys
+                        key2 = msvcrt.getch()
+                        return {
+                            b'H': 'up',
+                            b'P': 'down',
+                            b'K': 'left',
+                            b'M': 'right'
+                        }.get(key2, None)
+                    mapping = {
+                        b'w': 'up',
+                        b's': 'down',
+                        b'a': 'left',
+                        b'd': 'right',
+                        b'p': 'pause',
+                        b'i': 'interact',
+                        b'=': 'next_track',
+                        b'-': 'prev_track',
+                        b' ': 'attack',
+                        b'j': 'dodge_left',
+                        b'l': 'dodge_right',
+                        b'i': 'dodge_up',
+                        b'k': 'dodge_down',
+                        b'1': 'use_item_1',
+                        b'2': 'use_item_2',
+                        b'3': 'use_item_3',
+                        b'm': 'open_menu'
+                    }
+                    return mapping.get(key, None)
+
+                def locate_music_file(name, base_dir):
+                    p = os.path.join(base_dir, name)
+                    if os.path.exists(p):
+                        return os.path.abspath(p)
+                    target = name.lower()
+                    for f in os.listdir(base_dir):
+                        if f.lower() == target:
+                            return os.path.join(base_dir, f)
+                    base_no_ext = os.path.splitext(name)[0].lower()
+                    for f in os.listdir(base_dir):
+                        if os.path.splitext(f)[0].lower() == base_no_ext:
+                            return os.path.join(base_dir, f)
+                    return None
+
+                def clear_screen():
+                    os.system('cls' if os.name == 'nt' else 'clear')
+
+                def mp3_player_menu(controller):
+                    track_names = list(controller.tracks.keys())
+                    if not track_names:
+                        print("No tracks configured.")
+                        return
+
+                    selected = 0
+                    while True:
+                        clear_screen()
+                        print("\n=== MP3 Player ===")
+                        for i, name in enumerate(track_names):
+                            print(f"{'> ' if i == selected else '  '}{name}")
+                        print("Enter=Play, Esc=Exit, Up/Down=Navigate")
+
+                        key = msvcrt.getch()
+                        if key == b'\xe0':
+                            key2 = msvcrt.getch()
+                            if key2 == b'H':
+                                selected = (selected - 1) % len(track_names)
+                            elif key2 == b'P':
+                                selected = (selected + 1) % len(track_names)
+                        elif key == b'\r':
+                            controller.play(track_names[selected])
+                        elif key == b'\x1b':
+                            print("Closing MP3 Player...")
+                            break
+
+                def level_up(player_stats):
+                    for stat in ['defence', 'spirit', 'attack', 'magic', 'mana', 'HP']:
+                        player_stats[stat] = int(player_stats[stat] * 1.2)
+                    player_stats['Level'] += 1
+                    print("Level Up! You are now level", player_stats['Level'])
+                    return player_stats
+
+                # === TILE SYSTEM ===
+                def setup_tile(tiles, tile_id, x, y):
+                    tile = {'id': tile_id, 'x': x, 'y': y}
+                    tiles.append(tile)
+                    return tiles
+
+                def get_tile_id(x, y, tiles):
+                    for tile in tiles:
+                        if tile['x'] == x and tile['y'] == y:
+                            return tile['id']
+                    return "empty"
+
+                def check_collision(x, y, tiles):
+                    tile_id = get_tile_id(x, y, tiles)
+                    if tile_id in ["wall", "blocked"]:
+                        return False
+                    return True
+
+                # === MAP RENDERING ===
+                def render_map(map_data, player_x, player_y):
+                    """Render the map with the player position"""
+                    rendered = map_data[:]
+                    # Clamp player position to map bounds
+                    if 0 <= player_y < len(rendered) and 0 <= player_x < len(rendered[player_y]):
+                        row = list(rendered[player_y])
+                        row[player_x] = "⇩"
+                        rendered[player_y] = "".join(row)
+                    
+                    # Print the map
+                    for line in rendered:
+                        print(line)
+
+                # === START MENU ===
+                def start_menu():
+                    options = ["Start New Game", "Load Saved Game", "MP3 Player", "Quit"]
+                    selected = 0
+
+                    while True:
+                        clear_screen()
+                        print("\n=== The Fight Beyond Death ===")
+                        for i, option in enumerate(options):
+                            print(f"{'> ' if i == selected else '  '}{option}")
+
+                        key = msvcrt.getch()
+                        if key == b'\xe0':
+                            key2 = msvcrt.getch()
+                            if key2 == b'H':
+                                selected = (selected - 1) % len(options)
+                            elif key2 == b'P':
+                                selected = (selected + 1) % len(options)
+                        elif key == b'\r':
+                            return selected
+
+                # === SAVE / LOAD SYSTEM ===
+                def save_game(player_stats, inventory, game_mode, tiles, controller, save_file=SAVE_FILE):
+                    game_data = {
+                        "player_stats": player_stats,
+                        "inventory": inventory,
+                        "game_mode": game_mode,
+                        "tiles": tiles,
+                        "current_track": controller.current_track
+                    }
+                    try:
+                        with open(save_file, "w") as file:
+                            json.dump(game_data, file, indent=4)
+                        print("Game saved successfully.")
+                    except Exception as error:
+                        print("Error saving game:", error)
+
+                def load_game(controller, save_file=SAVE_FILE):
+                    try:
+                        with open(save_file, "r") as file:
+                            game_data = json.load(file)
+                        player_stats = game_data.get("player_stats", {
+                            'defence': 10, 'spirit': 10, 'attack': 10, 'magic': 10,
+                            'mana': 50, 'HP': 100, 'EXP': 0, 'Level': 1, 'Munny': 0,
+                            'x': 0, 'y': 0, 'invulnerable': False, 'steps': 0
+                        })
+                        inventory = game_data.get("inventory", [])
+                        game_mode = game_data.get("game_mode", "field")
+                        tiles = game_data.get("tiles", [])
+                        track = game_data.get("current_track")
+                        if track:
+                            controller.play(track)
+                        print("Game loaded successfully.")
+                        return player_stats, inventory, game_mode, tiles
+                    except FileNotFoundError:
+                        print("No save file found.")
+                        return None, None, None, None
+                    except Exception as error:
+                        print("Error loading game:", error)
+                        return None, None, None, None
+
+                # === ENEMY SYSTEM ===
+                def compute_damage(attacker_atk, defender_def):
+                    dmg = attacker_atk - defender_def
+                    return max(dmg, 0)
+
+                def enemy_update(enemy, player_stats):
+                    enemy.setdefault('cooldown', 1.0)
+                    enemy.setdefault('last_attack', 0.0)
+                    enemy.setdefault('stun_until', 0.0)
+                    enemy.setdefault('aggro_range', 5)
+                    enemy.setdefault('speed', 1)
+                    enemy.setdefault('defence', 0)
+                    enemy.setdefault('attack', enemy.get('Attack', 8))
+
+                    if enemy['HP'] <= 0:
+                        if enemy.get('state') != 'dead':
+                            enemy['state'] = 'dead'
+                            print(f"{enemy['name']} has died.")
+                        return enemy
+
+                    now = time.time()
+                    if now < enemy['stun_until']:
+                        enemy['state'] = 'stunned'
+                        return enemy
+
+                    distance = ((enemy['x'] - player_stats['x']) ** 2 + (enemy['y'] - player_stats['y']) ** 2) ** 0.5
+                    if distance > enemy['aggro_range']:
+                        enemy['state'] = 'idle'
+                        return enemy
+                    else:
+                        enemy['state'] = 'chasing'
+
+                    if enemy['x'] < player_stats['x']:
+                        enemy['x'] += enemy['speed']
+                    elif enemy['x'] > player_stats['x']:
+                        enemy['x'] -= enemy['speed']
+                    if enemy['y'] < player_stats['y']:
+                        enemy['y'] += enemy['speed']
+                    elif enemy['y'] > player_stats['y']:
+                        enemy['y'] -= enemy['speed']
+
+                    distance = ((enemy['x'] - player_stats['x']) ** 2 + (enemy['y'] - player_stats['y']) ** 2) ** 0.5
+                    if distance <= 1.0 and (now - enemy['last_attack']) >= enemy['cooldown']:
+                        enemy['state'] = 'attacking'
+                        enemy['last_attack'] = now
+                        print(f"{enemy['name']} is attacking!")
+                    return enemy
+
+                # === PLAYER DODGE FUNCTION ===
+                def player_dodge(player_stats, direction, tiles):
+                    dodge_distance = 2
+                    invulnerable_duration = 0.5
+                    dx, dy = 0, 0
+                    if direction == 'up':
+                        dy = -dodge_distance
+                    elif direction == 'down':
+                        dy = dodge_distance
+                    elif direction == 'left':
+                        dx = -dodge_distance
+                    elif direction == 'right':
+                        dx = dodge_distance
+                    new_x, new_y = player_stats['x'] + dx, player_stats['y'] + dy
+                    if check_collision(new_x, new_y, tiles):
+                        player_stats['x'], player_stats['y'] = new_x, new_y
+                    player_stats['invulnerable'] = True
+                    print("Player dodged!")
+                    time.sleep(invulnerable_duration)
+                    player_stats['invulnerable'] = False
+                    return player_stats
+
+                # === FIELD MODE ===
+                def field_mode(player_stats, inventory, tiles, controller, map_data):
+                    """Field mode: explore the map, trigger battles after steps"""
+                    pause = False
+                    steps_taken = player_stats.get('steps', 0)
+                    steps_to_battle = random.randint(4, 8)
+                    
+                    if 'town' in controller.tracks and controller.current_track != 'town':
+                        controller.play('town')
+
+                    print("Entering field mode. Move: arrows/WASD | Interact: i | Pause: p | Menu: m")
+                    time.sleep(1)
+
+                    while True:
+                        clear_screen()
+                        print(f"\n=== Field Mode (Steps: {steps_taken}/{steps_to_battle}) ===")
+                        render_map(map_data, player_stats['x'], player_stats['y'])
+                        print(f"HP: {player_stats['HP']} | MP: {player_stats['mana']} | Level: {player_stats['Level']}")
+                        print("Move: WASD/Arrows | Interact: i | Pause: p | Menu: m")
+
+                        action = read_action()
+
+                        if action is None:
+                            time.sleep(0.02)
+                            continue
+
+                        # Pause handling
+                        if action == 'pause':
+                            pause = not pause
+                            print("Game Paused." if pause else "Resuming game.")
+                            while pause:
+                                k = read_action()
+                                if k == 'pause':
+                                    pause = False
+                                time.sleep(0.02)
+                            continue
+
+                        # Movement
+                        if action in ('up', 'down', 'left', 'right'):
+                            dx, dy = 0, 0
+                            if action == 'up':
+                                dy = -1
+                            elif action == 'down':
+                                dy = 1
+                            elif action == 'left':
+                                dx = -1
+                            elif action == 'right':
+                                dx = 1
+                            
+                            new_x = player_stats['x'] + dx
+                            new_y = player_stats['y'] + dy
+                            
+                            if check_collision(new_x, new_y, tiles):
+                                player_stats['x'] = new_x
+                                player_stats['y'] = new_y
+                                steps_taken += 1
+                                
+                                # Check for random encounter
+                                if steps_taken >= steps_to_battle:
+                                    print("A battle approaches!")
+                                    time.sleep(1)
+                                    if 'battle' in controller.tracks:
+                                        controller.play('battle')
+                                    player_stats['steps'] = steps_taken
+                                    return player_stats, inventory, tiles, "battle"
+
+                        # Interactions
+                        elif action == 'interact':
+                            tile_id = get_tile_id(player_stats['x'], player_stats['y'], tiles)
+                            if tile_id == "NPC":
+                                print("You met an NPC!")
+                                input("Press Enter to continue...")
+                            elif tile_id == "chest":
+                                item = "Potion"
+                                inventory.append(item)
+                                print(f"You opened a chest! Obtained {item}.")
+                                time.sleep(1)
+                            elif tile_id == "door":
+                                print("You pass through the door to a new area...")
+                                time.sleep(1)
+                            else:
+                                print("There's nothing to interact with here.")
+                                time.sleep(0.5)
+
+                        # Music control
+                        elif action == 'next_track':
+                            controller.next_track()
+                        elif action == 'prev_track':
+                            controller.prev_track()
+
+                        # Open menu
+                        elif action == 'open_menu':
+                            in_game_menu(player_stats, inventory, controller)
+
+                        time.sleep(0.02)
+
+                # === IN-GAME MENU ===
+                def in_game_menu(player_stats, inventory, controller):
+                    options = ["Resume", "Items", "Save", "Load", "MP3 Player", "Status", "Quit to Title"]
+                    selected = 0
+                    while True:
+                        clear_screen()
+                        print("\n=== Menu ===")
+                        for i, option in enumerate(options):
+                            print(f"{'> ' if i == selected else '  '}{option}")
+                        key = msvcrt.getch()
+                        if key == b'\xe0':
+                            key2 = msvcrt.getch()
+                            if key2 == b'H':
+                                selected = (selected - 1) % len(options)
+                            elif key2 == b'P':
+                                selected = (selected + 1) % len(options)
+                        elif key == b'\r':
+                            choice = options[selected]
+                            if choice == "Resume":
+                                return
+                            elif choice == "Items":
+                                clear_screen()
+                                if inventory:
+                                    print("Inventory:", ", ".join(inventory))
+                                else:
+                                    print("Inventory is empty.")
+                                input("Press Enter to continue...")
+                            elif choice == "Save":
+                                save_game(player_stats, inventory, "field", [], controller)
+                                input("Press Enter to continue...")
+                            elif choice == "Load":
+                                p, inv, gm, tl = load_game(controller)
+                                if p:
+                                    player_stats.update(p)
+                                    inventory[:] = inv
+                                    print("Loaded game in menu.")
+                                    input("Press Enter to continue...")
+                            elif choice == "MP3 Player":
+                                mp3_player_menu(controller)
+                            elif choice == "Status":
+                                clear_screen()
+                                print(f"HP: {player_stats['HP']} | MP: {player_stats['mana']} | ATK: {player_stats['attack']} | DEF: {player_stats['defence']} | LV: {player_stats['Level']} | EXP: {player_stats['EXP']} | Munny: {player_stats['Munny']}")
+                                input("Press Enter to continue...")
+                            elif choice == "Quit to Title":
+                                controller.stop()
+                                controller.stop1()
+                                controller.stop2()
+                                controller.stop3()
+                                raise SystemExit("ReturnToTitle")
+
+                # === BATTLE MODE ===
+                def render_battle(player_stats, enemies, player_sprite="⇩"):
+                    """Render the battle screen with sprites"""
+                    clear_screen()
+                    print("\n=== BATTLE MODE ===\n")
+                    
+                    # Display player
+                    print(f"Player ({player_stats['x']}, {player_stats['y']}): {player_sprite}")
+                    print(f"HP: {player_stats['HP']} | ATK: {player_stats['attack']} | DEF: {player_stats['defence']}\n")
+                    
+                    # Display enemies
+                    print("Enemies:")
+                    for i, enemy in enumerate(enemies):
+                        if enemy['HP'] > 0:
+                            print(f"{i+1}. {enemy['name']} ({enemy['x']}, {enemy['y']}): {enemy.get('sprite', '●')} HP: {enemy['HP']}/{enemy.get('max_hp', 30)} | State: {enemy.get('state', 'idle')}")
+                    print()
+
+                def battle_mode(player_stats, inventory, controller):
+                    """Battle mode with sprite display and enemy positioning"""
+                    # Spawn enemies
+                    current_enemies = [
+                        {
+                            'name': 'Shadow',
+                            'HP': 30,
+                            'max_hp': 30,
+                            'attack': 10,
+                            'defence': 4,
+                            'speed': 1,
+                            'aggro_range': 5,
+                            'x': player_stats['x'] + 4,
+                            'y': player_stats['y'],
+                            'exp_reward': 25,
+                            'munny_reward': 5,
+                            'item_drop': None,
+                            'state': 'idle',
+                            'cooldown': 1.2,
+                            'sprite': '◈'
+                        }
+                    ]
+
+                    if 'battle' in controller.tracks:
+                        controller.play('battle')
+
+                    print("Entering battle. Attack: Space | Dodge: J/L/I/K | Move: WASD/arrows | Pause: p")
+                    time.sleep(2)
+                    
+                    last_player_attack = 0.0
+                    player_attack_cooldown = 0.5
+
+                    while True:
+                        render_battle(player_stats, current_enemies)
+                        
+                        action = read_action()
+
+                        if action is None:
+                            # Update enemies
+                            for e in current_enemies:
+                                enemy_update(e, player_stats)
+                                # Enemy attacks player
+                                if e.get('state') == 'attacking':
+                                    if not player_stats.get('invulnerable', False):
+                                        dmg = compute_damage(e.get('attack', 10), player_stats.get('defence', 10))
+                                        if dmg > 0:
+                                            player_stats['HP'] -= dmg
+                                            print(f"{e['name']} hits you for {dmg}. HP: {player_stats['HP']}")
+                                    else:
+                                        print("You dodged the attack!")
+                            
+                            # Check win condition
+                            if all(e['HP'] <= 0 for e in current_enemies):
+                                total_exp = sum(e.get('exp_reward', 0) for e in current_enemies)
+                                total_munny = sum(e.get('munny_reward', 0) for e in current_enemies)
+                                player_stats['EXP'] += total_exp
+                                player_stats['Munny'] += total_munny
+                                print(f"Gained {total_exp} EXP and {total_munny} Munny!")
+                                for e in current_enemies:
+                                    drop = e.get('item_drop')
+                                    if drop:
+                                        inventory.append(drop)
+                                        print(f"Received item: {drop}")
+                                
+                                level_threshold = player_stats['Level'] * 100
+                                if player_stats['EXP'] >= level_threshold:
+                                    level_up(player_stats)
+                                
+                                print("Battle won! Returning to field...")
+                                time.sleep(2)
+                                if 'town' in controller.tracks:
+                                    controller.play('town')
+                                
+                                player_stats['steps'] = 0  # Reset step counter
+                                return player_stats, inventory, "field"
+
+                            if player_stats['HP'] <= 0:
+                                print("Game Over!")
+                                controller.stop()
+                                controller.stop1()
+                                controller.stop2()
+                                controller.stop3()
+                                return player_stats, inventory, "end game"
+
+                            time.sleep(0.02)
+                            continue
+
+                        # Pause
+                        if action == 'pause':
+                            print("Battle Paused. Press 'p' to resume.")
+                            while True:
+                                k = read_action()
+                                if k == 'pause':
+                                    print("Resuming battle.")
+                                    break
+                                time.sleep(0.02)
+                            continue
+
+                        # Movement
+                        if action in ('up', 'down', 'left', 'right'):
+                            dx, dy = 0, 0
+                            if action == 'up':
+                                dy = -1
+                            elif action == 'down':
+                                dy = 1
+                            elif action == 'left':
+                                dx = -1
+                            elif action == 'right':
+                                dx = 1
+                            player_stats['x'] += dx
+                            player_stats['y'] += dy
+
+                        # Dodge
+                        elif action in ('dodge_left', 'dodge_right', 'dodge_up', 'dodge_down'):
+                            direction = {
+                                'dodge_left': 'left',
+                                'dodge_right': 'right',
+                                'dodge_up': 'up',
+                                'dodge_down': 'down'
+                            }[action]
+                            player_stats = player_dodge(player_stats, direction, [])
+
+                        # Attack
+                        elif action == 'attack':
+                            now = time.time()
+                            if now - last_player_attack >= player_attack_cooldown:
+                                last_player_attack = now
+                                alive = [e for e in current_enemies if e['HP'] > 0]
+                                if alive:
+                                    target = min(alive, key=lambda e: (e['x'] - player_stats['x']) ** 2 + (e['y'] - player_stats['y']) ** 2)
+                                    dmg = compute_damage(player_stats.get('attack', 10), target.get('defence', 0))
+                                    target['HP'] -= dmg
+                                    print(f"You strike {target['name']} for {dmg}. HP left: {max(target['HP'], 0)}")
+                                    if target['HP'] > 0:
+                                        target['stun_until'] = time.time() + 0.3
+
+                        # Items
+                        elif action in ('use_item_1', 'use_item_2', 'use_item_3'):
+                            idx = {'use_item_1': 0, 'use_item_2': 1, 'use_item_3': 2}[action]
+                            if idx < len(inventory):
+                                item = inventory.pop(idx)
+                                print(f"You used {item}.")
+                                if item.lower() == "potion":
+                                    player_stats['HP'] = min(player_stats['HP'] + 20, player_stats['Level'] * 120)
+                                    print(f"HP healed. Current HP: {player_stats['HP']}")
+                            else:
+                                print("No item in that slot.")
+
+                        # Music control
+                        elif action == 'next_track':
+                            controller.next_track()
+                        elif action == 'prev_track':
+                            controller.prev_track()
+
+                        time.sleep(0.02)
+
+                # === MAIN GAME LOOP ===
+                def main():
+                    # Initialize game state
+                    frame_tiles = {}
+                    character_sprites = {
+                        'walk': '⇩',
+                        'attack': '⚔',
+                        'dodge': '◄'
+                    }
+                    
+                    player_stats = {
+                        'defence': 10, 'spirit': 10, 'attack': 10, 'magic': 10,
+                        'mana': 50, 'HP': 100, 'EXP': 0, 'Level': 1, 'Munny': 0,
+                        'x': 0, 'y': 0, 'invulnerable': False, 'steps': 0
+                    }
+                    
+                    tiles = []
+                    inventory = []
+                    game_mode = "field"
+                    
+                    # Map data (field mode)
+                    map_g = [
+                        '⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⡀⠀⠀⠀⠀⠀⠀⣀⢀⠀⡀⠀⣀⡀⠀⢀⠀⢀⣀⣀⣀⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
+                        '⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣶⣾⣿⣶⣄⠀⠀⢈⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡆⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
+                        '⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⠀⣀⡄⢀⡀⠀⢀⣀⠀⣠⡀⢐⣾⣿⣿⣿⣧⣀⣀⣼⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣧⣄⣀⣀⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
+                    ]
+
+                    # Setup basic tiles/walls
+                    for x in range(-5, 6):
+                        setup_tile(tiles, "wall", x, -3)
+                        setup_tile(tiles, "wall", x, 3)
+                    for y in range(-2, 3):
+                        setup_tile(tiles, "wall", -6, y)
+                        setup_tile(tiles, "wall", 6, y)
+                    setup_tile(tiles, "chest", 0, 0)
+                    setup_tile(tiles, "NPC", 2, 0)
+                    setup_tile(tiles, "door", -5, 0)
+
+                    # Audio setup
+                    this_dir = os.path.dirname(os.path.abspath(__file__))
+                    requested = {
+                        "battle": "Organization Battle.wav",
+                        "town": "Twilight Town.wav",
+                        "destiny": "Destiny Islands.wav",
+                        "final1": "KH-CoM Final Battle1.wav",
+                        "final2": "KH-CoM Final Battle2.wav"
+                    }
+                    tracks = {}
+                    for key, fname in requested.items():
+                        found = locate_music_file(fname, this_dir)
+                        if found:
+                            tracks[key] = found
+                            print(f"Found {key}: {found}")
+                        else:
+                            print(f"Missing {key}: tried '{fname}' in {this_dir}")
+
+                    controller = MusicController(tracks)
+                    controller.list_tracks()
+
+                    # === START MENU ===
+                    try:
+                        choice = start_menu()
+                    except KeyboardInterrupt:
+                        print("Goodbye.")
+                        return
+
+                    if choice == 0:  # Start New Game
+                        print("Starting new game...")
+                        time.sleep(1)
+                    elif choice == 1:  # Load Saved Game
+                        p, inv, gm, tl = load_game(controller)
+                        if p is None:
+                            print("No save file found. Starting new game instead.")
+                            time.sleep(1)
+                        else:
+                            player_stats, inventory, game_mode, tiles = p, inv, gm, tl
+                            print("Loaded previous save file.")
+                            time.sleep(1)
+                    elif choice == 2:  # MP3 Player
+                        mp3_player_menu(controller)
+                        choice = start_menu()
+                    elif choice == 3:  # Quit
+                        print("Goodbye!")
+                        return
+
+                    # === MAIN GAME LOOP ===
+                    while True:
+                        try:
+                            if game_mode == "field":
+                                player_stats, inventory, tiles, game_mode = field_mode(player_stats, inventory, tiles, controller, map_g)
+
+                            elif game_mode == "battle":
+                                player_stats, inventory, game_mode = battle_mode(player_stats, inventory, controller)
+
+                            elif game_mode == "end game":
+                                print("Thank you for playing!")
+                                controller.stop()
+                                controller.stop1()
+                                controller.stop2()
+                                controller.stop3()
+                                break
+                        except SystemExit as e:
+                            if "ReturnToTitle" in str(e):
+                                print("Returning to title...")
+                                choice = start_menu()
+                                if choice == 3:
+                                    print("Goodbye!")
+                                    break
+                                elif choice == 0:
+                                    player_stats = {
+                                        'defence': 10, 'spirit': 10, 'attack': 10, 'magic': 10,
+                                        'mana': 50, 'HP': 100, 'EXP': 0, 'Level': 1, 'Munny': 0,
+                                        'x': 0, 'y': 0, 'invulnerable': False, 'steps': 0
+                                    }
+                                    tiles = []
+                                    inventory = []
+                                    game_mode = "field"
+                                    for x in range(-5, 6):
+                                        setup_tile(tiles, "wall", x, -3)
+                                        setup_tile(tiles, "wall", x, 3)
+                                    for y in range(-2, 3):
+                                        setup_tile(tiles, "wall", -6, y)
+                                        setup_tile(tiles, "wall", 6, y)
+                                    setup_tile(tiles, "chest", 0, 0)
+                                    setup_tile(tiles, "NPC", 2, 0)
+                                    setup_tile(tiles, "door", -5, 0)
+                                elif choice == 1:
+                                    p, inv, gm, tl = load_game(controller)
+                                    if p:
+                                        player_stats, inventory, game_mode, tiles = p, inv, gm, tl
+
+                if __name__ == "__main__":
+                    main()
                 if e.get('state') == 'attacking':
                     if not player_stats.get('invulnerable', False):
                         dmg = compute_damage(e.get('attack', 10), player_stats.get('defence', 10))
