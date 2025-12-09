@@ -402,7 +402,9 @@ def main():
     requested = {
         "battle": "Organization Battle.wav",
         "town": "Twilight Town.wav",
-        "destiny": "Destiny Islands.wav"
+        "destiny": "Destiny Islands.wav", 
+        "final1": "KH-CoM Final Battle1.wav",
+        "final2": "KH-CoM Final Battle2.wav"
     }
     tracks = {}
     for k, fname in requested.items():
