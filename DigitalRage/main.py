@@ -8,6 +8,7 @@ import random
 import msvcrt
 import json
 from music_controller import MusicController
+from maps import map1
 
 SAVE_FILE = "save.json"
 
@@ -99,12 +100,21 @@ def check_collision(x, y, tiles):
     return get_tile_id(x, y, tiles) not in ("wall", "blocked")
 
 def render_map(map_data, player_x, player_y):
-    # map_data: list[str] (rows), player coords in grid indices
-    rows = [list(r) for r in map_data]
-    if 0 <= player_y < len(rows) and 0 <= player_x < len(rows[player_y]):
-        rows[player_y][player_x] = "⇩"
-    for r in rows:
-        print("".join(r))
+    """Render the map with player position overlaid."""
+    os.system("cls")
+    if not map_data or len(map_data) == 0:
+        print("[No map data]")
+        return
+    
+    for row_idx, row in enumerate(map_data):
+        line = ""
+        for col_idx, char in enumerate(row):
+            if row_idx == player_y and col_idx == player_x:
+                line += "@"  # Player marker
+            else:
+                line += char
+        print(line)
+    print(f"\n[Player: {player_x}, {player_y}] WASD/arrows=move, i=interact, p=pause, m=menu")
 
 # --- Save/Load ---
 def save_game(player_stats, inventory, game_mode, tiles, controller, save_file=SAVE_FILE):
@@ -202,11 +212,15 @@ def render_battle(player_stats, enemies, frame_index, player_sprite):
 
 # --- Modes ---
 def field_mode(player_stats, inventory, tiles, controller, map_data):
+    """Field mode: explore map, encounter battles, interact with tiles."""
     # auto-music
     if 'town' in controller.tracks and getattr(controller, "current_track", None) != 'town':
         music_play(controller, 'town')
-    print("Entering field. WASD/arrows to move. i=interact, p=pause, m=menu")
+    
     steps = player_stats.get('steps', 0)
+    last_x, last_y = player_stats['x'], player_stats['y']
+    render_map(map_data, last_x, last_y)  # Initial render
+    
     while True:
         action = read_action()
         if action is None:
@@ -217,6 +231,7 @@ def field_mode(player_stats, inventory, tiles, controller, map_data):
             while True:
                 if read_action() == 'pause':
                     print("Resumed.")
+                    render_map(map_data, player_stats['x'], player_stats['y'])
                     break
                 time.sleep(0.02)
             continue
@@ -228,6 +243,8 @@ def field_mode(player_stats, inventory, tiles, controller, map_data):
                 player_stats['x'], player_stats['y'] = nx, ny
                 steps += 1
                 player_stats['steps'] = steps
+                # Only render if position changed
+                render_map(map_data, player_stats['x'], player_stats['y'])
                 if random.random() < 0.05:
                     if 'battle' in controller.tracks:
                         music_play(controller, 'battle')
@@ -238,6 +255,8 @@ def field_mode(player_stats, inventory, tiles, controller, map_data):
             time.sleep(0.6)
         elif action == 'open_menu':
             in_game_menu(player_stats, inventory, controller)
+            # Re-render after menu closes
+            render_map(map_data, player_stats['x'], player_stats['y'])
         elif action == 'next_track':
             music_next(controller)
         elif action == 'prev_track':
@@ -361,17 +380,10 @@ def battle_mode(player_stats, inventory, controller):
 
 # --- Main ---
 def main():
-    # minimal map: list of strings (same length rows)
-    map_data = [
-        "####################",
-        "#..................#",
-        "#..N....C..........#",
-        "#..................#",
-        "#.......D..........#",
-        "####################",
-    ]
-    # initial player
-    player_stats = {'x': 3, 'y': 2, 'HP': 120, 'attack': 12, 'defence': 5, 'Level':1, 'steps':0}
+    # Use map from maps.py
+    map_data = map1
+    # initial player (started in middle-ish area)
+    player_stats = {'x': 40, 'y': 30, 'HP': 120, 'attack': 12, 'defence': 5, 'Level':1, 'steps':0}
     tiles = []
     # place tiles from map chars
     for y, row in enumerate(map_data):

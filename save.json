@@ -1,12 +1,12 @@
 {
   "player_stats": {
-    "x": -13,
-    "y": 4,
-    "HP": 78,
+    "x": 42,
+    "y": 5,
+    "HP": 111,
     "attack": 12,
     "defence": 5,
     "Level": 1,
-    "steps": 33
+    "steps": 29
   },
   "inventory": [],
   "game_mode": "field",
