@@ -1,0 +1,15 @@
+{
+  "player_stats": {
+    "x": -13,
+    "y": 4,
+    "HP": 78,
+    "attack": 12,
+    "defence": 5,
+    "Level": 1,
+    "steps": 33
+  },
+  "inventory": [],
+  "game_mode": "field",
+  "tiles": [],
+  "current_track": "destiny"
+}

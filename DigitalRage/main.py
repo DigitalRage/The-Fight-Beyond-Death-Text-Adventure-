@@ -2,49 +2,74 @@
 
 #SETUP
 #- Import libraries: os, time, winsound, mscrt, save (My Save File), music controller (music playback)
-import os, time, random, msvcrt, json
+import os
+import time
+import random
+import msvcrt
+import json
 from music_controller import MusicController
 
 SAVE_FILE = "save.json"
 
-# === Utility: Input mapping (msvcrt) ===
+# --- Helpers for resilient music API (work with controllers that expose play or play_track, next, next_track, etc.) ---
+def _call(controller, *names, default=None):
+    for n in names:
+        if hasattr(controller, n):
+            return getattr(controller, n)
+    return default
+
+def music_play(controller, name):
+    fn = _call(controller, "play", "play_track")
+    if fn:
+        fn(name)
+
+def music_pause(controller):
+    fn = _call(controller, "pause")
+    if fn:
+        fn()
+
+def music_resume(controller):
+    fn = _call(controller, "resume")
+    if fn:
+        fn()
+
+def music_stop(controller):
+    fn = _call(controller, "stop")
+    if fn:
+        fn()
+
+def music_next(controller):
+    fn = _call(controller, "next_track", "next")
+    if fn:
+        fn()
+
+def music_prev(controller):
+    fn = _call(controller, "prev_track", "prev")
+    if fn:
+        fn()
+
+def music_list(controller):
+    fn = _call(controller, "list_tracks", "list")
+    if fn:
+        fn()
+
+# --- Input (msvcrt) ---
 def read_action():
-    # Non-blocking: returns a semantic action or None
     if not msvcrt.kbhit():
         return None
     key = msvcrt.getch()
-    if key == b'\xe0':  # arrow keys
+    if key == b'\xe0':  # special / arrow
         key2 = msvcrt.getch()
-        return {
-            b'H': 'up',
-            b'P': 'down',
-            b'K': 'left',
-            b'M': 'right'
-        }.get(key2, None)
+        return {b'H': 'up', b'P': 'down', b'K': 'left', b'M': 'right'}.get(key2)
     mapping = {
-        b'w': 'up',
-        b's': 'down',
-        b'a': 'left',
-        b'd': 'right',
-        b'p': 'pause',
-        b'i': 'interact',
-        b'=': 'next_track',
-        b'-': 'prev_track',
-        b' ': 'attack',
-        b'j': 'dodge_left',
-        b'l': 'dodge_right',
-        b'i': 'dodge_up',
-        b'k': 'dodge_down',
-        b'1': 'use_item_1',
-        b'2': 'use_item_2',
-        b'3': 'use_item_3',
-        b'm': 'open_menu'
+        b'w': 'up', b's': 'down', b'a': 'left', b'd': 'right',
+        b'p': 'pause', b'i': 'interact', b'=': 'next_track', b'-': 'prev_track',
+        b' ': 'attack', b'j': 'dodge_left', b'l': 'dodge_right', b'k': 'dodge_down', b'u': 'dodge_up',
+        b'1': 'use_item_1', b'2': 'use_item_2', b'3': 'use_item_3', b'm': 'open_menu'
     }
     return mapping.get(key, None)
 
-#Music runner function
-#- Input: music track name
-#- Use Music Controller to play track
+# --- FS helpers ---
 def locate_music_file(name, base_dir):
     p = os.path.join(base_dir, name)
     if os.path.exists(p):
@@ -59,1671 +84,349 @@ def locate_music_file(name, base_dir):
             return os.path.join(base_dir, f)
     return None
 
-def clear_screen():
-    os.system('cls') #Cleans the console screen
-
-def mp3_player_menu(controller):
-    # Display configured track keys (e.g., "battle", "town", "destiny")
-    track_names = list(controller.tracks.keys())
-    if not track_names:
-        print("No tracks configured.")
-        return
-
-    selected = 0
-    while True:
-        print("\n\033c=== MP3 Player ===")
-        for i, name in enumerate(track_names):
-            print(f"{'> ' if i == selected else '  '}{name}")
-        print("Enter=Play, Esc=Exit, Up/Down=Navigate")
-
-        key = msvcrt.getch()
-        if key == b'\xe0':
-            key2 = msvcrt.getch()
-            if key2 == b'H':
-                selected = (selected - 1) % len(track_names)
-            elif key2 == b'P':
-                selected = (selected + 1) % len(track_names)
-        elif key == b'\r':
-            controller.play(track_names[selected])
-        elif key == b'\x1b':
-            print("Closing MP3 Player...")
-            break
-
-#LEVEL UP FUNCTION
-#- Input: level number
-#- Multiply all stats by 1.2
-#- Return new stats
-#- Display "Level Up!" message
-def level_up(player_stats):
-    for stat in ['defence', 'spirit', 'attack', 'magic', 'mana', 'HP']:
-        player_stats[stat] = int(player_stats[stat] * 1.2)
-    player_stats['Level'] += 1
-    print("Level Up! You are now level", player_stats['Level'])
-    return player_stats
-
-#TILE SETUP FUNCTION
-#- Input: tile id, x coordinate, y coordinate
-#- Create a tile object with id, x, y
-#- Place tile object into Tiles list
-#- When map is displayed, draw each tile at its x and y coordinates
+# --- Map / Tiles ---
 def setup_tile(tiles, tile_id, x, y):
-    tile = {'id': tile_id, 'x': x, 'y': y}
-    tiles.append(tile)
+    tiles.append({'id': tile_id, 'x': x, 'y': y})
     return tiles
 
-#TILE ID FUNCTION
-#- Input: player position (x, y)
-#- Check which tile in Tiles list matches the position
-#- Return tile id
-#- If no tile found then return "empty"
 def get_tile_id(x, y, tiles):
-    for tile in tiles:
-        if tile['x'] == x and tile['y'] == y:
-            return tile['id']
+    for t in tiles:
+        if t['x'] == x and t['y'] == y:
+            return t['id']
     return "empty"
 
-#COLLISION FUNCTION
-#- Input: desired player position (x, y)
-#- Use Tile ID function to check tile at that position
-#- If tile id is "wall" or "blocked" then prevent movement
-#- Else allow movement
 def check_collision(x, y, tiles):
-    tile_id = get_tile_id(x, y, tiles)
-    if tile_id in ["wall", "blocked"]:
-        return False
-    return True
+    return get_tile_id(x, y, tiles) not in ("wall", "blocked")
 
-#MAP RENDER FUNCTION
-def render_map(
-        map_data, player_x, player_y):
-    # Copy rows so we don’t overwrite permanently
-    rendered = map_data[:]
-    row = list(rendered[player_y])  # convert string to list of chars
-    row[player_x] = "⇩"             # replace character at player position
-    rendered[player_y] = "".join(row)
-    # Print the map
-    for line in rendered:
-        print(line)
+def render_map(map_data, player_x, player_y):
+    # map_data: list[str] (rows), player coords in grid indices
+    rows = [list(r) for r in map_data]
+    if 0 <= player_y < len(rows) and 0 <= player_x < len(rows[player_y]):
+        rows[player_y][player_x] = "⇩"
+    for r in rows:
+        print("".join(r))
 
-# === START MENU ===
-def start_menu():
-    options = ["Start New Game", "Load Saved Game", "MP3 Player", "Quit"]
-    selected = 0
-
-    while True:
-        print("\n\033c=== The Fight Beyond Death ===")
-        for i, option in enumerate(options):
-            print(f"{'> ' if i == selected else '  '}{option}")
-
-        key = msvcrt.getch()
-        if key == b'\xe0':  # arrow keys
-            key2 = msvcrt.getch()
-            if key2 == b'H':  # Up
-                selected = (selected - 1) % len(options)
-            elif key2 == b'P':  # Down
-                selected = (selected + 1) % len(options)
-        elif key == b'\r':  # Enter
-            return selected
-
-#SAVE / LOAD SYSTEM
-#- Save function:
-#  - Store player stats, inventory, current map, position, and track index
-#  - Write data to save file
+# --- Save/Load ---
 def save_game(player_stats, inventory, game_mode, tiles, controller, save_file=SAVE_FILE):
-    game_data = {
+    data = {
         "player_stats": player_stats,
         "inventory": inventory,
         "game_mode": game_mode,
         "tiles": tiles,
-        "current_track": controller.current_track
+        "current_track": getattr(controller, "current_track", None)
     }
     try:
-        with open(save_file, "w") as file:
-            json.dump(game_data, file, indent=4)
-        print("Game saved successfully.")
-    except Exception as error:
-        print("Error saving game:", error)
+        with open(save_file, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+        print("Saved.")
+    except Exception as e:
+        print("Save error:", e)
 
-#- Load function:
-#  - Read data from save file
-#  - Restore player stats, inventory, current map, position, and track index
-#  - Resume game from saved state
 def load_game(controller, save_file=SAVE_FILE):
     try:
-        with open(save_file, "r") as file:
-            game_data = json.load(file)
-        player_stats = game_data.get("player_stats", {
-            'defence': 10, 'spirit': 10, 'attack': 10, 'magic': 10,
-            'mana': 50, 'HP': 100, 'EXP': 0, 'Level': 1, 'Munny': 0,
-            'x': 0, 'y': 0, 'invulnerable': False
-        })
-        inventory = game_data.get("inventory", [])
-        game_mode = game_data.get("game_mode", "field")
-        tiles = game_data.get("tiles", [])
-        track = game_data.get("current_track")
+        with open(save_file, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        player_stats = data.get("player_stats", {})
+        inventory = data.get("inventory", [])
+        game_mode = data.get("game_mode", "field")
+        tiles = data.get("tiles", [])
+        track = data.get("current_track")
         if track:
-            controller.play(track)
-        print("Game loaded successfully.")
+            music_play(controller, track)
+        print("Loaded.")
         return player_stats, inventory, game_mode, tiles
     except FileNotFoundError:
-        print("No save file found.")
+        print("No save file.")
         return None, None, None, None
-    except Exception as error:
-        print("Error loading game:", error)
+    except Exception as e:
+        print("Load error:", e)
         return None, None, None, None
 
-#ENEMY SYSTEM (LIVE ACTION)
-#- Enemy object:
-#  - Name, HP, Attack, Defence, Speed, Aggro range
-#  - State (idle, chasing, attacking, stunned)
-#  - Attack cooldown
-#  - Reward: EXP amount, Munny amount, possible item drop
-#- Enemy update loop runs every frame:
-#  - If HP <= 0 then enemy dies and drop reward
-#  - Else:
-#    - If distance > aggro range then state is "idle"
-#    - Else if distance <= aggro range then state is "chasing"
-#    - If state is "chasing":
-#      - Move toward player
-#      - If close enough then state is "attacking"
-#    - If state is "attacking":
-#      - Play attack animation
-#      - Trigger "attack window" (short time where player can dodge)
-#      - If player dodge is active during window:
-#        - Player avoids damage
-#      - Else:
-#        - Damage is enemy attack - player defence
-#        - If damage < 0 then damage is 0
-#        - Subtract damage from player HP
-#      - Reset state to "chasing" after cooldown
-#    - If enemy is hit by player:
-#      - Subtract damage from enemy HP
-#      - If HP > 0 then briefly set state is "stunned"
-#      - After stun duration return to chasing
-def compute_damage(attacker_atk, defender_def):
-    dmg = attacker_atk - defender_def
-    return max(dmg, 0)
+# --- UI / menus ---
+def mp3_player_menu(controller):
+    names = list(controller.tracks.keys())
+    if not names:
+        print("No tracks.")
+        return
+    idx = 0
+    while True:
+        os.system("cls")
+        print("=== MP3 Player ===")
+        for i, n in enumerate(names):
+            print(f"{'> ' if i==idx else '  '}{n}")
+        print("Enter = play, Esc = exit, arrows to move")
+        k = msvcrt.getch()
+        if k == b'\xe0':
+            k2 = msvcrt.getch()
+            if k2 == b'H': idx = (idx-1) % len(names)
+            elif k2 == b'P': idx = (idx+1) % len(names)
+        elif k == b'\r':
+            music_play(controller, names[idx])
+        elif k == b'\x1b':
+            break
 
-def enemy_update(enemy, player_stats):
-    # Setup defaults
-    enemy.setdefault('cooldown', 1.0)
-    enemy.setdefault('last_attack', 0.0)
-    enemy.setdefault('stun_until', 0.0)
-    enemy.setdefault('aggro_range', 5)
-    enemy.setdefault('speed', 1)
-    enemy.setdefault('defence', 0)
-    enemy.setdefault('attack', enemy.get('Attack', 8))
+def start_menu():
+    opts = ["Start New Game", "Load Saved Game", "MP3 Player", "Quit"]
+    sel = 0
+    while True:
+        os.system("cls")
+        print("=== The Fight Beyond Death ===")
+        for i,o in enumerate(opts):
+            print(f"{'> ' if i==sel else '  '}{o}")
+        k = msvcrt.getch()
+        if k == b'\xe0':
+            k2 = msvcrt.getch()
+            if k2 == b'H': sel = (sel-1) % len(opts)
+            elif k2 == b'P': sel = (sel+1) % len(opts)
+        elif k == b'\r':
+            return sel
 
-    if enemy['HP'] <= 0:
-        if enemy.get('state') != 'dead':
-            enemy['state'] = 'dead'
-            print(f"{enemy['name']} has died.")
-        return enemy
+# --- Battle / rendering frames ---
+def render_battle(player_stats, enemies, frame_index, player_sprite):
+    os.system("cls")
+    print("=== BATTLE ===")
+    # show player frame
+    player_frame = player_sprite.get('frames', [player_sprite.get('walk')])[frame_index % max(1, len(player_sprite.get('frames', [player_sprite.get('walk')])))]
+    print(f"Player @ ({player_stats['x']},{player_stats['y']}): {player_frame}  HP:{player_stats['HP']}")
+    print()
+    print("Enemies:")
+    for e in enemies:
+        # enemy uses walk sprite placeholder if not provided
+        e_sprite = e.get('sprite', e.get('walk', player_sprite.get('walk', '◈')))
+        # if sprite has frames list, show a frame, else show single char
+        if isinstance(e_sprite, list):
+            s = e_sprite[frame_index % len(e_sprite)]
+        else:
+            s = e_sprite
+        print(f" - {e['name']} ({e['x']},{e['y']}): {s} HP:{e['HP']}")
 
-    now = time.time()
-    if now < enemy['stun_until']:
-        enemy['state'] = 'stunned'
-        return enemy
-
-    # Distance
-    distance = ((enemy['x'] - player_stats['x']) ** 2 + (enemy['y'] - player_stats['y']) ** 2) ** 0.5
-    if distance > enemy['aggro_range']:
-        enemy['state'] = 'idle'
-        return enemy
-    else:
-        enemy['state'] = 'chasing'
-
-    # Move
-    if enemy['x'] < player_stats['x']:
-        enemy['x'] += enemy['speed']
-    elif enemy['x'] > player_stats['x']:
-        enemy['x'] -= enemy['speed']
-    if enemy['y'] < player_stats['y']:
-        enemy['y'] += enemy['speed']
-    elif enemy['y'] > player_stats['y']:
-        enemy['y'] -= enemy['speed']
-
-    # Recompute distance
-    distance = ((enemy['x'] - player_stats['x']) ** 2 + (enemy['y'] - player_stats['y']) ** 2) ** 0.5
-    if distance <= 1.0 and (now - enemy['last_attack']) >= enemy['cooldown']:
-        enemy['state'] = 'attacking'
-        enemy['last_attack'] = now
-        print(f"{enemy['name']} is attacking!")
-    return enemy
-
-#PLAYER DODGE FUNCTION
-#- Input: dodge button press
-#- When pressed:
-#  - Move player quickly 2 tiles in chosen direction
-#  - Set "invulnerable" flag for short duration (e.g. 0.5 seconds)
-#  - If enemy attack occurs during invulnerable window then no damage taken
-#  - Show dodge animation
-def player_dodge(player_stats, direction, tiles):
-    dodge_distance = 2
-    invulnerable_duration = 0.5
-    dx, dy = 0, 0
-    if direction == 'up':
-        dy = -dodge_distance
-    elif direction == 'down':
-        dy = dodge_distance
-    elif direction == 'left':
-        dx = -dodge_distance
-    elif direction == 'right':
-        dx = dodge_distance
-    new_x, new_y = player_stats['x'] + dx, player_stats['y'] + dy
-    if check_collision(new_x, new_y, tiles):
-        player_stats['x'], player_stats['y'] = new_x, new_y
-    player_stats['invulnerable'] = True
-    print("Player dodged!")
-    time.sleep(invulnerable_duration)
-    player_stats['invulnerable'] = False
-    print("Player is no longer invulnerable.")
-    return player_stats
-
-#FIELD MODE
-#- While player is alive and game mode is "field":
-#  - If pause button is pressed then toggle Pause state
-#    - While Pause state is true:
-#      - Display "Game Paused"
-#      - If pause button pressed again then resume game
-#  - Else if movement button pressed then check collision and move player if allowed
-#  - Else if interact button pressed:
-#    - Use Tile ID function to check current tile
-#    - If tile id is NPC then start dialogue
-#    - Else if tile id is chest then open chest and add item to inventory
-#    - Else if tile id is door then transition to new map
-#    - Else do nothing
-#  - Else if "=" is pressed:
-#    - Increase Track index by 1
-#    - If Track index > last track then wrap to first track
-#    - Play new track (handled internally by game engine)
-#  - Else if "-" is pressed:
-#    - Decrease Track index by 1
-#    - If Track index < 0 then wrap to last track
-#    - Play new track (handled internally by game engine)
-#  - Else if menu button is pressed then open menu (items, equipment, save, load, quit)
-#  - Else wait for button press
-#  - If random encounter is triggered then switch game mode to "battle"
-#  - When entering field mode automatically start field background music
-def field_mode(player_stats, inventory, tiles, controller):
-    pause = False
-    # Auto field music
-    if 'town' in controller.tracks and controller.current_track != 'town':
-        controller.play('town')
-
-    print("Entering field mode. Move: arrows/WASD | Interact: i | Pause: p | Menu: m")
+# --- Modes ---
+def field_mode(player_stats, inventory, tiles, controller, map_data):
+    # auto-music
+    if 'town' in controller.tracks and getattr(controller, "current_track", None) != 'town':
+        music_play(controller, 'town')
+    print("Entering field. WASD/arrows to move. i=interact, p=pause, m=menu")
+    steps = player_stats.get('steps', 0)
     while True:
         action = read_action()
-
         if action is None:
-            # Random encounter check even when idle
-            if random.random() < 0.002:  # slow chance while idle
-                print("A random encounter!")
-                if 'battle' in controller.tracks:
-                    controller.play('battle')
-                return player_stats, inventory, tiles, "battle"
-            time.sleep(0.02)
+            time.sleep(0.03)
             continue
-
-        # Pause handling
         if action == 'pause':
-            pause = not pause
-            print("Game Paused." if pause else "Resuming game.")
-            while pause:
-                k = read_action()
-                if k == 'pause':
-                    pause = False
-                    print("Resuming game.")
-                time.sleep(0.02)
-            continue
-
-        # Movement
-        if action in ('up', 'down', 'left', 'right'):
-            dx, dy = 0, 0
-            if action == 'up': dy = -1
-            elif action == 'down': dy = 1
-            elif action == 'left': dx = -1
-            elif action == 'right': dx = 1
-            new_x, new_y = player_stats['x'] + dx, player_stats['y'] + dy
-            if check_collision(new_x, new_y, tiles):
-                player_stats['x'], player_stats['y'] = new_x, new_y
-            # Random encounter on movement
-            if random.random() < 0.05:
-                print("A battle approaches!")
-                if 'battle' in controller.tracks:
-                    controller.play('battle')
-                return player_stats, inventory, tiles, "battle"
-
-        # Interactions
-        elif action == 'interact':
-            tile_id = get_tile_id(player_stats['x'], player_stats['y'], tiles)
-            if tile_id == "NPC":
-                print("Starting dialogue with NPC...")
-            elif tile_id == "chest":
-                item = "Potion"
-                inventory.append(item)
-                print(f"You opened a chest! Obtained {item}.")
-            elif tile_id == "door":
-                print("You pass through the door to a new area...")
-                # Example: teleport player or change map
-            else:
-                print("There's nothing to interact with here.")
-
-        # Music control
-        elif action == 'next_track':
-            controller.next_track()
-        elif action == 'prev_track':
-            controller.prev_track()
-
-        # Open menu
-        elif action == 'open_menu':
-            in_game_menu(player_stats, inventory, controller)
-
-        time.sleep(0.02)
-
-# In-game menu (pause, items, save, load, mp3, quit to title)
-def in_game_menu(player_stats, inventory, controller):
-    options = ["Resume", "Items", "Save", "Load", "MP3 Player", "Status", "Quit to Title"]
-    selected = 0
-    while True:
-        print("\n\033c=== Menu ===")
-        for i, option in enumerate(options):
-            print(f"{'> ' if i == selected else '  '}{option}")
-        key = msvcrt.getch()
-        if key == b'\xe0':
-            key2 = msvcrt.getch()
-            if key2 == b'H':
-                selected = (selected - 1) % len(options)
-            elif key2 == b'P':
-                selected = (selected + 1) % len(options)
-        elif key == b'\r':
-            choice = options[selected]
-            if choice == "Resume":
-                return
-            elif choice == "Items":
-                if inventory:
-                    print("Inventory:", ", ".join(inventory))
-                else:
-                    print("Inventory is empty.")
-            elif choice == "Save":
-                save_game(player_stats, inventory, "field", [], controller)
-            elif choice == "Load":
-                p, inv, gm, tl = load_game(controller)
-                if p:
-                    player_stats.update(p)
-                    inventory[:] = inv
-                    print("Loaded game in menu.")
-            elif choice == "MP3 Player":
-                mp3_player_menu(controller)
-            elif choice == "Status":
-                print(f"HP: {player_stats['HP']} | MP: {player_stats['mana']} | ATK: {player_stats['attack']} | DEF: {player_stats['defence']} | LV: {player_stats['Level']} | EXP: {player_stats['EXP']} | Munny: {player_stats['Munny']}")
-            elif choice == "Quit to Title":
-                # Stop music on all channels
-                controller.stop(); controller.stop1(); controller.stop2(); controller.stop3()
-                # Return to title by raising a simple flag via exception pattern
-                raise SystemExit("ReturnToTitle")
-
-#BATTLE MODE
-#- While player is alive and game mode is "battle":
-#  - If pause button is pressed then toggle Pause state
-#    - While Pause state is true:
-#      - Display "Game Paused"
-#      - If pause button pressed again then resume game
-#  - Else if movement button pressed then move player 1 tile and show walk sprite
-#  - Else if dodge button pressed then run Player Dodge Function
-#  - Else if attack button pressed then hit opponent, calculate damage, show attack sprite
-#  - Else if item button is pressed:
-#    - If number button is pressed then use item
-#    - Else if "+" is pressed then go to next item list
-#    - Else if "-" is pressed then go to previous item list
-#    - Else if Backspace is pressed then return to battle setup
-#    - Else wait for button press
-#  - For each enemy: run Enemy Update Loop
-#  - If player dies:
-#    - If quit button is pressed then show "Game Over" and close game
-#    - Else if load save button is pressed then load last save file and return to field mode
-#    - Else end game loop
-#  - When entering battle mode automatically start battle background music
-def battle_mode(player_stats, inventory, controller):
-    # Spawn enemies
-    current_enemies = [
-        {
-            'name': 'Shadow',
-            'HP': 30,
-            'attack': 10,
-            'defence': 4,
-            'speed': 1,
-            'aggro_range': 5,
-            'x': player_stats['x'] + 4,
-            'y': player_stats['y'],
-            'exp_reward': 25,
-            'munny_reward': 5,
-            'item_drop': None,
-            'state': 'idle',
-            'cooldown': 1.2
-        }
-    ]
-
-    if 'battle' in controller.tracks:
-        controller.play('battle')
-
-    print("Entering battle. Attack: Space | Dodge: J/L/I/K | Move: WASD/arrows | Pause: p")
-    last_player_attack = 0.0
-    player_attack_cooldown = 0.5
-
-    while True:
-        action = read_action()
-
-        if action is None:
-            # Update enemies even when idle
-            for e in current_enemies:
-                # BB 1st Final Project, The Fight Beyond Death: Text Adventure
-
-                # SETUP
-
-                SAVE_FILE = "save.json"
-
-                # === Utility: Input mapping (msvcrt) ===
-                def read_action():
-                    if not msvcrt.kbhit():
-                        return None
-                    key = msvcrt.getch()
-                    if key == b'\xe0':  # arrow keys
-                        key2 = msvcrt.getch()
-                        return {
-                            b'H': 'up',
-                            b'P': 'down',
-                            b'K': 'left',
-                            b'M': 'right'
-                        }.get(key2, None)
-                    mapping = {
-                        b'w': 'up',
-                        b's': 'down',
-                        b'a': 'left',
-                        b'd': 'right',
-                        b'p': 'pause',
-                        b'i': 'interact',
-                        b'=': 'next_track',
-                        b'-': 'prev_track',
-                        b' ': 'attack',
-                        b'j': 'dodge_left',
-                        b'l': 'dodge_right',
-                        b'i': 'dodge_up',
-                        b'k': 'dodge_down',
-                        b'1': 'use_item_1',
-                        b'2': 'use_item_2',
-                        b'3': 'use_item_3',
-                        b'm': 'open_menu'
-                    }
-                    return mapping.get(key, None)
-
-                def locate_music_file(name, base_dir):
-                    p = os.path.join(base_dir, name)
-                    if os.path.exists(p):
-                        return os.path.abspath(p)
-                    target = name.lower()
-                    for f in os.listdir(base_dir):
-                        if f.lower() == target:
-                            return os.path.join(base_dir, f)
-                    base_no_ext = os.path.splitext(name)[0].lower()
-                    for f in os.listdir(base_dir):
-                        if os.path.splitext(f)[0].lower() == base_no_ext:
-                            return os.path.join(base_dir, f)
-                    return None
-
-                def clear_screen():
-                    os.system('cls' if os.name == 'nt' else 'clear')
-
-                def mp3_player_menu(controller):
-                    track_names = list(controller.tracks.keys())
-                    if not track_names:
-                        print("No tracks configured.")
-                        return
-
-                    selected = 0
-                    while True:
-                        clear_screen()
-                        print("\n=== MP3 Player ===")
-                        for i, name in enumerate(track_names):
-                            print(f"{'> ' if i == selected else '  '}{name}")
-                        print("Enter=Play, Esc=Exit, Up/Down=Navigate")
-
-                        key = msvcrt.getch()
-                        if key == b'\xe0':
-                            key2 = msvcrt.getch()
-                            if key2 == b'H':
-                                selected = (selected - 1) % len(track_names)
-                            elif key2 == b'P':
-                                selected = (selected + 1) % len(track_names)
-                        elif key == b'\r':
-                            controller.play(track_names[selected])
-                        elif key == b'\x1b':
-                            print("Closing MP3 Player...")
-                            break
-
-                def level_up(player_stats):
-                    for stat in ['defence', 'spirit', 'attack', 'magic', 'mana', 'HP']:
-                        player_stats[stat] = int(player_stats[stat] * 1.2)
-                    player_stats['Level'] += 1
-                    print("Level Up! You are now level", player_stats['Level'])
-                    return player_stats
-
-                # === TILE SYSTEM ===
-                def setup_tile(tiles, tile_id, x, y):
-                    tile = {'id': tile_id, 'x': x, 'y': y}
-                    tiles.append(tile)
-                    return tiles
-
-                def get_tile_id(x, y, tiles):
-                    for tile in tiles:
-                        if tile['x'] == x and tile['y'] == y:
-                            return tile['id']
-                    return "empty"
-
-                def check_collision(x, y, tiles):
-                    tile_id = get_tile_id(x, y, tiles)
-                    if tile_id in ["wall", "blocked"]:
-                        return False
-                    return True
-
-                # === MAP RENDERING ===
-                def render_map(map_data, player_x, player_y):
-                    """Render the map with the player position"""
-                    rendered = map_data[:]
-                    # Clamp player position to map bounds
-                    if 0 <= player_y < len(rendered) and 0 <= player_x < len(rendered[player_y]):
-                        row = list(rendered[player_y])
-                        row[player_x] = "⇩"
-                        rendered[player_y] = "".join(row)
-                    
-                    # Print the map
-                    for line in rendered:
-                        print(line)
-
-                # === START MENU ===
-                def start_menu():
-                    options = ["Start New Game", "Load Saved Game", "MP3 Player", "Quit"]
-                    selected = 0
-
-                    while True:
-                        clear_screen()
-                        print("\n=== The Fight Beyond Death ===")
-                        for i, option in enumerate(options):
-                            print(f"{'> ' if i == selected else '  '}{option}")
-
-                        key = msvcrt.getch()
-                        if key == b'\xe0':
-                            key2 = msvcrt.getch()
-                            if key2 == b'H':
-                                selected = (selected - 1) % len(options)
-                            elif key2 == b'P':
-                                selected = (selected + 1) % len(options)
-                        elif key == b'\r':
-                            return selected
-
-                # === SAVE / LOAD SYSTEM ===
-                def save_game(player_stats, inventory, game_mode, tiles, controller, save_file=SAVE_FILE):
-                    game_data = {
-                        "player_stats": player_stats,
-                        "inventory": inventory,
-                        "game_mode": game_mode,
-                        "tiles": tiles,
-                        "current_track": controller.current_track
-                    }
-                    try:
-                        with open(save_file, "w") as file:
-                            json.dump(game_data, file, indent=4)
-                        print("Game saved successfully.")
-                    except Exception as error:
-                        print("Error saving game:", error)
-
-                def load_game(controller, save_file=SAVE_FILE):
-                    try:
-                        with open(save_file, "r") as file:
-                            game_data = json.load(file)
-                        player_stats = game_data.get("player_stats", {
-                            'defence': 10, 'spirit': 10, 'attack': 10, 'magic': 10,
-                            'mana': 50, 'HP': 100, 'EXP': 0, 'Level': 1, 'Munny': 0,
-                            'x': 0, 'y': 0, 'invulnerable': False, 'steps': 0
-                        })
-                        inventory = game_data.get("inventory", [])
-                        game_mode = game_data.get("game_mode", "field")
-                        tiles = game_data.get("tiles", [])
-                        track = game_data.get("current_track")
-                        if track:
-                            controller.play(track)
-                        print("Game loaded successfully.")
-                        return player_stats, inventory, game_mode, tiles
-                    except FileNotFoundError:
-                        print("No save file found.")
-                        return None, None, None, None
-                    except Exception as error:
-                        print("Error loading game:", error)
-                        return None, None, None, None
-
-                # === ENEMY SYSTEM ===
-                def compute_damage(attacker_atk, defender_def):
-                    dmg = attacker_atk - defender_def
-                    return max(dmg, 0)
-
-                def enemy_update(enemy, player_stats):
-                    enemy.setdefault('cooldown', 1.0)
-                    enemy.setdefault('last_attack', 0.0)
-                    enemy.setdefault('stun_until', 0.0)
-                    enemy.setdefault('aggro_range', 5)
-                    enemy.setdefault('speed', 1)
-                    enemy.setdefault('defence', 0)
-                    enemy.setdefault('attack', enemy.get('Attack', 8))
-
-                    if enemy['HP'] <= 0:
-                        if enemy.get('state') != 'dead':
-                            enemy['state'] = 'dead'
-                            print(f"{enemy['name']} has died.")
-                        return enemy
-
-                    now = time.time()
-                    if now < enemy['stun_until']:
-                        enemy['state'] = 'stunned'
-                        return enemy
-
-                    distance = ((enemy['x'] - player_stats['x']) ** 2 + (enemy['y'] - player_stats['y']) ** 2) ** 0.5
-                    if distance > enemy['aggro_range']:
-                        enemy['state'] = 'idle'
-                        return enemy
-                    else:
-                        enemy['state'] = 'chasing'
-
-                    if enemy['x'] < player_stats['x']:
-                        enemy['x'] += enemy['speed']
-                    elif enemy['x'] > player_stats['x']:
-                        enemy['x'] -= enemy['speed']
-                    if enemy['y'] < player_stats['y']:
-                        enemy['y'] += enemy['speed']
-                    elif enemy['y'] > player_stats['y']:
-                        enemy['y'] -= enemy['speed']
-
-                    distance = ((enemy['x'] - player_stats['x']) ** 2 + (enemy['y'] - player_stats['y']) ** 2) ** 0.5
-                    if distance <= 1.0 and (now - enemy['last_attack']) >= enemy['cooldown']:
-                        enemy['state'] = 'attacking'
-                        enemy['last_attack'] = now
-                        print(f"{enemy['name']} is attacking!")
-                    return enemy
-
-                # === PLAYER DODGE FUNCTION ===
-                def player_dodge(player_stats, direction, tiles):
-                    dodge_distance = 2
-                    invulnerable_duration = 0.5
-                    dx, dy = 0, 0
-                    if direction == 'up':
-                        dy = -dodge_distance
-                    elif direction == 'down':
-                        dy = dodge_distance
-                    elif direction == 'left':
-                        dx = -dodge_distance
-                    elif direction == 'right':
-                        dx = dodge_distance
-                    new_x, new_y = player_stats['x'] + dx, player_stats['y'] + dy
-                    if check_collision(new_x, new_y, tiles):
-                        player_stats['x'], player_stats['y'] = new_x, new_y
-                    player_stats['invulnerable'] = True
-                    print("Player dodged!")
-                    time.sleep(invulnerable_duration)
-                    player_stats['invulnerable'] = False
-                    return player_stats
-
-                # === FIELD MODE ===
-                def field_mode(player_stats, inventory, tiles, controller, map_data):
-                    """Field mode: explore the map, trigger battles after steps"""
-                    pause = False
-                    steps_taken = player_stats.get('steps', 0)
-                    steps_to_battle = random.randint(4, 8)
-                    
-                    if 'town' in controller.tracks and controller.current_track != 'town':
-                        controller.play('town')
-
-                    print("Entering field mode. Move: arrows/WASD | Interact: i | Pause: p | Menu: m")
-                    time.sleep(1)
-
-                    while True:
-                        clear_screen()
-                        print(f"\n=== Field Mode (Steps: {steps_taken}/{steps_to_battle}) ===")
-                        render_map(map_data, player_stats['x'], player_stats['y'])
-                        print(f"HP: {player_stats['HP']} | MP: {player_stats['mana']} | Level: {player_stats['Level']}")
-                        print("Move: WASD/Arrows | Interact: i | Pause: p | Menu: m")
-
-                        action = read_action()
-
-                        if action is None:
-                            time.sleep(0.02)
-                            continue
-
-                        # Pause handling
-                        if action == 'pause':
-                            pause = not pause
-                            print("Game Paused." if pause else "Resuming game.")
-                            while pause:
-                                k = read_action()
-                                if k == 'pause':
-                                    pause = False
-                                time.sleep(0.02)
-                            continue
-
-                        # Movement
-                        if action in ('up', 'down', 'left', 'right'):
-                            dx, dy = 0, 0
-                            if action == 'up':
-                                dy = -1
-                            elif action == 'down':
-                                dy = 1
-                            elif action == 'left':
-                                dx = -1
-                            elif action == 'right':
-                                dx = 1
-                            
-                            new_x = player_stats['x'] + dx
-                            new_y = player_stats['y'] + dy
-                            
-                            if check_collision(new_x, new_y, tiles):
-                                player_stats['x'] = new_x
-                                player_stats['y'] = new_y
-                                steps_taken += 1
-                                
-                                # Check for random encounter
-                                if steps_taken >= steps_to_battle:
-                                    print("A battle approaches!")
-                                    time.sleep(1)
-                                    if 'battle' in controller.tracks:
-                                        controller.play('battle')
-                                    player_stats['steps'] = steps_taken
-                                    return player_stats, inventory, tiles, "battle"
-
-                        # Interactions
-                        elif action == 'interact':
-                            tile_id = get_tile_id(player_stats['x'], player_stats['y'], tiles)
-                            if tile_id == "NPC":
-                                print("You met an NPC!")
-                                input("Press Enter to continue...")
-                            elif tile_id == "chest":
-                                item = "Potion"
-                                inventory.append(item)
-                                print(f"You opened a chest! Obtained {item}.")
-                                time.sleep(1)
-                            elif tile_id == "door":
-                                print("You pass through the door to a new area...")
-                                time.sleep(1)
-                            else:
-                                print("There's nothing to interact with here.")
-                                time.sleep(0.5)
-
-                        # Music control
-                        elif action == 'next_track':
-                            controller.next_track()
-                        elif action == 'prev_track':
-                            controller.prev_track()
-
-                        # Open menu
-                        elif action == 'open_menu':
-                            in_game_menu(player_stats, inventory, controller)
-
-                        time.sleep(0.02)
-
-                # === IN-GAME MENU ===
-                def in_game_menu(player_stats, inventory, controller):
-                    options = ["Resume", "Items", "Save", "Load", "MP3 Player", "Status", "Quit to Title"]
-                    selected = 0
-                    while True:
-                        clear_screen()
-                        print("\n=== Menu ===")
-                        for i, option in enumerate(options):
-                            print(f"{'> ' if i == selected else '  '}{option}")
-                        key = msvcrt.getch()
-                        if key == b'\xe0':
-                            key2 = msvcrt.getch()
-                            if key2 == b'H':
-                                selected = (selected - 1) % len(options)
-                            elif key2 == b'P':
-                                selected = (selected + 1) % len(options)
-                        elif key == b'\r':
-                            choice = options[selected]
-                            if choice == "Resume":
-                                return
-                            elif choice == "Items":
-                                clear_screen()
-                                if inventory:
-                                    print("Inventory:", ", ".join(inventory))
-                                else:
-                                    print("Inventory is empty.")
-                                input("Press Enter to continue...")
-                            elif choice == "Save":
-                                save_game(player_stats, inventory, "field", [], controller)
-                                input("Press Enter to continue...")
-                            elif choice == "Load":
-                                p, inv, gm, tl = load_game(controller)
-                                if p:
-                                    player_stats.update(p)
-                                    inventory[:] = inv
-                                    print("Loaded game in menu.")
-                                    input("Press Enter to continue...")
-                            elif choice == "MP3 Player":
-                                mp3_player_menu(controller)
-                            elif choice == "Status":
-                                clear_screen()
-                                print(f"HP: {player_stats['HP']} | MP: {player_stats['mana']} | ATK: {player_stats['attack']} | DEF: {player_stats['defence']} | LV: {player_stats['Level']} | EXP: {player_stats['EXP']} | Munny: {player_stats['Munny']}")
-                                input("Press Enter to continue...")
-                            elif choice == "Quit to Title":
-                                controller.stop()
-                                controller.stop1()
-                                controller.stop2()
-                                controller.stop3()
-                                raise SystemExit("ReturnToTitle")
-
-                # === BATTLE MODE ===
-                def render_battle(player_stats, enemies, player_sprite="⇩"):
-                    """Render the battle screen with sprites"""
-                    clear_screen()
-                    print("\n=== BATTLE MODE ===\n")
-                    
-                    # Display player
-                    print(f"Player ({player_stats['x']}, {player_stats['y']}): {player_sprite}")
-                    print(f"HP: {player_stats['HP']} | ATK: {player_stats['attack']} | DEF: {player_stats['defence']}\n")
-                    
-                    # Display enemies
-                    print("Enemies:")
-                    for i, enemy in enumerate(enemies):
-                        if enemy['HP'] > 0:
-                            print(f"{i+1}. {enemy['name']} ({enemy['x']}, {enemy['y']}): {enemy.get('sprite', '●')} HP: {enemy['HP']}/{enemy.get('max_hp', 30)} | State: {enemy.get('state', 'idle')}")
-                    print()
-
-                def battle_mode(player_stats, inventory, controller):
-                    """Battle mode with sprite display and enemy positioning"""
-                    # Spawn enemies
-                    current_enemies = [
-                        {
-                            'name': 'Shadow',
-                            'HP': 30,
-                            'max_hp': 30,
-                            'attack': 10,
-                            'defence': 4,
-                            'speed': 1,
-                            'aggro_range': 5,
-                            'x': player_stats['x'] + 4,
-                            'y': player_stats['y'],
-                            'exp_reward': 25,
-                            'munny_reward': 5,
-                            'item_drop': None,
-                            'state': 'idle',
-                            'cooldown': 1.2,
-                            'sprite': '◈'
-                        }
-                    ]
-
-                    if 'battle' in controller.tracks:
-                        controller.play('battle')
-
-                    print("Entering battle. Attack: Space | Dodge: J/L/I/K | Move: WASD/arrows | Pause: p")
-                    time.sleep(2)
-                    
-                    last_player_attack = 0.0
-                    player_attack_cooldown = 0.5
-
-                    while True:
-                        render_battle(player_stats, current_enemies)
-                        
-                        action = read_action()
-
-                        if action is None:
-                            # Update enemies
-                            for e in current_enemies:
-                                enemy_update(e, player_stats)
-                                # Enemy attacks player
-                                if e.get('state') == 'attacking':
-                                    if not player_stats.get('invulnerable', False):
-                                        dmg = compute_damage(e.get('attack', 10), player_stats.get('defence', 10))
-                                        if dmg > 0:
-                                            player_stats['HP'] -= dmg
-                                            print(f"{e['name']} hits you for {dmg}. HP: {player_stats['HP']}")
-                                    else:
-                                        print("You dodged the attack!")
-                            
-                            # Check win condition
-                            if all(e['HP'] <= 0 for e in current_enemies):
-                                total_exp = sum(e.get('exp_reward', 0) for e in current_enemies)
-                                total_munny = sum(e.get('munny_reward', 0) for e in current_enemies)
-                                player_stats['EXP'] += total_exp
-                                player_stats['Munny'] += total_munny
-                                print(f"Gained {total_exp} EXP and {total_munny} Munny!")
-                                for e in current_enemies:
-                                    drop = e.get('item_drop')
-                                    if drop:
-                                        inventory.append(drop)
-                                        print(f"Received item: {drop}")
-                                
-                                level_threshold = player_stats['Level'] * 100
-                                if player_stats['EXP'] >= level_threshold:
-                                    level_up(player_stats)
-                                
-                                print("Battle won! Returning to field...")
-                                time.sleep(2)
-                                if 'town' in controller.tracks:
-                                    controller.play('town')
-                                
-                                player_stats['steps'] = 0  # Reset step counter
-                                return player_stats, inventory, "field"
-
-                            if player_stats['HP'] <= 0:
-                                print("Game Over!")
-                                controller.stop()
-                                controller.stop1()
-                                controller.stop2()
-                                controller.stop3()
-                                return player_stats, inventory, "end game"
-
-                            time.sleep(0.02)
-                            continue
-
-                        # Pause
-                        if action == 'pause':
-                            print("Battle Paused. Press 'p' to resume.")
-                            while True:
-                                k = read_action()
-                                if k == 'pause':
-                                    print("Resuming battle.")
-                                    break
-                                time.sleep(0.02)
-                            continue
-
-                        # Movement
-                        if action in ('up', 'down', 'left', 'right'):
-                            dx, dy = 0, 0
-                            if action == 'up':
-                                dy = -1
-                            elif action == 'down':
-                                dy = 1
-                            elif action == 'left':
-                                dx = -1
-                            elif action == 'right':
-                                dx = 1
-                            player_stats['x'] += dx
-                            player_stats['y'] += dy
-
-                        # Dodge
-                        elif action in ('dodge_left', 'dodge_right', 'dodge_up', 'dodge_down'):
-                            direction = {
-                                'dodge_left': 'left',
-                                'dodge_right': 'right',
-                                'dodge_up': 'up',
-                                'dodge_down': 'down'
-                            }[action]
-                            player_stats = player_dodge(player_stats, direction, [])
-
-                        # Attack
-                        elif action == 'attack':
-                            now = time.time()
-                            if now - last_player_attack >= player_attack_cooldown:
-                                last_player_attack = now
-                                alive = [e for e in current_enemies if e['HP'] > 0]
-                                if alive:
-                                    target = min(alive, key=lambda e: (e['x'] - player_stats['x']) ** 2 + (e['y'] - player_stats['y']) ** 2)
-                                    dmg = compute_damage(player_stats.get('attack', 10), target.get('defence', 0))
-                                    target['HP'] -= dmg
-                                    print(f"You strike {target['name']} for {dmg}. HP left: {max(target['HP'], 0)}")
-                                    if target['HP'] > 0:
-                                        target['stun_until'] = time.time() + 0.3
-
-                        # Items
-                        elif action in ('use_item_1', 'use_item_2', 'use_item_3'):
-                            idx = {'use_item_1': 0, 'use_item_2': 1, 'use_item_3': 2}[action]
-                            if idx < len(inventory):
-                                item = inventory.pop(idx)
-                                print(f"You used {item}.")
-                                if item.lower() == "potion":
-                                    player_stats['HP'] = min(player_stats['HP'] + 20, player_stats['Level'] * 120)
-                                    print(f"HP healed. Current HP: {player_stats['HP']}")
-                            else:
-                                print("No item in that slot.")
-
-                        # Music control
-                        elif action == 'next_track':
-                            controller.next_track()
-                        elif action == 'prev_track':
-                            controller.prev_track()
-
-                        time.sleep(0.02)
-
-                # === MAIN GAME LOOP ===
-                def main():
-                    # Initialize game state
-                    frame_tiles = {}
-                    character_sprites = {
-                        'walk': '⇩',
-                        'attack': '⚔',
-                        'dodge': '◄'
-                    }
-                    
-                    player_stats = {
-                        'defence': 10, 'spirit': 10, 'attack': 10, 'magic': 10,
-                        'mana': 50, 'HP': 100, 'EXP': 0, 'Level': 1, 'Munny': 0,
-                        'x': 0, 'y': 0, 'invulnerable': False, 'steps': 0
-                    }
-                    
-                    tiles = []
-                    inventory = []
-                    game_mode = "field"
-                    
-                    # Map data (field mode)
-                    map_g = [
-                        '⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⡀⠀⠀⠀⠀⠀⠀⣀⢀⠀⡀⠀⣀⡀⠀⢀⠀⢀⣀⣀⣀⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-                        '⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣶⣾⣿⣶⣄⠀⠀⢈⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡆⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-                        '⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⠀⣀⡄⢀⡀⠀⢀⣀⠀⣠⡀⢐⣾⣿⣿⣿⣧⣀⣀⣼⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣧⣄⣀⣀⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-                    ]
-
-                    # Setup basic tiles/walls
-                    for x in range(-5, 6):
-                        setup_tile(tiles, "wall", x, -3)
-                        setup_tile(tiles, "wall", x, 3)
-                    for y in range(-2, 3):
-                        setup_tile(tiles, "wall", -6, y)
-                        setup_tile(tiles, "wall", 6, y)
-                    setup_tile(tiles, "chest", 0, 0)
-                    setup_tile(tiles, "NPC", 2, 0)
-                    setup_tile(tiles, "door", -5, 0)
-
-                    # Audio setup
-                    this_dir = os.path.dirname(os.path.abspath(__file__))
-                    requested = {
-                        "battle": "Organization Battle.wav",
-                        "town": "Twilight Town.wav",
-                        "destiny": "Destiny Islands.wav",
-                        "final1": "KH-CoM Final Battle1.wav",
-                        "final2": "KH-CoM Final Battle2.wav"
-                    }
-                    tracks = {}
-                    for key, fname in requested.items():
-                        found = locate_music_file(fname, this_dir)
-                        if found:
-                            tracks[key] = found
-                            print(f"Found {key}: {found}")
-                        else:
-                            print(f"Missing {key}: tried '{fname}' in {this_dir}")
-
-                    controller = MusicController(tracks)
-                    controller.list_tracks()
-
-                    # === START MENU ===
-                    try:
-                        choice = start_menu()
-                    except KeyboardInterrupt:
-                        print("Goodbye.")
-                        return
-
-                    if choice == 0:  # Start New Game
-                        print("Starting new game...")
-                        time.sleep(1)
-                    elif choice == 1:  # Load Saved Game
-                        p, inv, gm, tl = load_game(controller)
-                        if p is None:
-                            print("No save file found. Starting new game instead.")
-                            time.sleep(1)
-                        else:
-                            player_stats, inventory, game_mode, tiles = p, inv, gm, tl
-                            print("Loaded previous save file.")
-                            time.sleep(1)
-                    elif choice == 2:  # MP3 Player
-                        mp3_player_menu(controller)
-                        choice = start_menu()
-                    elif choice == 3:  # Quit
-                        print("Goodbye!")
-                        return
-
-                    # === MAIN GAME LOOP ===
-                    while True:
-                        try:
-                            if game_mode == "field":
-                                player_stats, inventory, tiles, game_mode = field_mode(player_stats, inventory, tiles, controller, map_g)
-
-                            elif game_mode == "battle":
-                                player_stats, inventory, game_mode = battle_mode(player_stats, inventory, controller)
-
-                            elif game_mode == "end game":
-                                print("Thank you for playing!")
-                                controller.stop()
-                                controller.stop1()
-                                controller.stop2()
-                                controller.stop3()
-                                break
-                        except SystemExit as e:
-                            if "ReturnToTitle" in str(e):
-                                print("Returning to title...")
-                                choice = start_menu()
-                                if choice == 3:
-                                    print("Goodbye!")
-                                    break
-                                elif choice == 0:
-                                    player_stats = {
-                                        'defence': 10, 'spirit': 10, 'attack': 10, 'magic': 10,
-                                        'mana': 50, 'HP': 100, 'EXP': 0, 'Level': 1, 'Munny': 0,
-                                        'x': 0, 'y': 0, 'invulnerable': False, 'steps': 0
-                                    }
-                                    tiles = []
-                                    inventory = []
-                                    game_mode = "field"
-                                    for x in range(-5, 6):
-                                        setup_tile(tiles, "wall", x, -3)
-                                        setup_tile(tiles, "wall", x, 3)
-                                    for y in range(-2, 3):
-                                        setup_tile(tiles, "wall", -6, y)
-                                        setup_tile(tiles, "wall", 6, y)
-                                    setup_tile(tiles, "chest", 0, 0)
-                                    setup_tile(tiles, "NPC", 2, 0)
-                                    setup_tile(tiles, "door", -5, 0)
-                                elif choice == 1:
-                                    p, inv, gm, tl = load_game(controller)
-                                    if p:
-                                        player_stats, inventory, game_mode, tiles = p, inv, gm, tl
-
-                if __name__ == "__main__":
-                    main()
-                if e.get('state') == 'attacking':
-                    if not player_stats.get('invulnerable', False):
-                        dmg = compute_damage(e.get('attack', 10), player_stats.get('defence', 10))
-                        if dmg > 0:
-                            player_stats['HP'] -= dmg
-                            print(f"{e['name']} hits you for {dmg}. HP: {player_stats['HP']}")
-                    else:
-                        print("You dodged the attack!")
-            # Win/Loss checks
-            if all(e['HP'] <= 0 for e in current_enemies):
-                # Rewards
-                total_exp = sum(e.get('exp_reward', 0) for e in current_enemies)
-                total_munny = sum(e.get('munny_reward', 0) for e in current_enemies)
-                player_stats['EXP'] += total_exp
-                player_stats['Munny'] += total_munny
-                print(f"Gained {total_exp} EXP and {total_munny} Munny!")
-                for e in current_enemies:
-                    drop = e.get('item_drop')
-                    if drop:
-                        inventory.append(drop)
-                        print(f"Received item: {drop}")
-                # Level up check
-                level_threshold = player_stats['Level'] * 100
-                if player_stats['EXP'] >= level_threshold:
-                    level_up(player_stats)
-                # Transition back to field
-                if 'town' in controller.tracks:
-                    controller.play('town')
-                return player_stats, inventory, "field"
-
-            if player_stats['HP'] <= 0:
-                print("Game Over!")
-                # Stop music channels
-                controller.stop(); controller.stop1(); controller.stop2(); controller.stop3()
-                return player_stats, inventory, "end game"
-
-            time.sleep(0.02)
-            continue
-
-        # Pause
-        if action == 'pause':
-            print("Battle Paused. Press 'p' to resume.")
+            print("Paused. press p to resume.")
             while True:
-                k = read_action()
-                if k == 'pause':
-                    print("Resuming battle.")
+                if read_action() == 'pause':
+                    print("Resumed.")
                     break
                 time.sleep(0.02)
             continue
-
-        # Movement
-        if action in ('up', 'down', 'left', 'right'):
-            dx, dy = 0, 0
-            if action == 'up': dy = -1
-            elif action == 'down': dy = 1
-            elif action == 'left': dx = -1
-            elif action == 'right': dx = 1
-            player_stats['x'] += dx
-            player_stats['y'] += dy
-
-        # Dodge
-        elif action in ('dodge_left', 'dodge_right', 'dodge_up', 'dodge_down'):
-            direction = {
-                'dodge_left': 'left',
-                'dodge_right': 'right',
-                'dodge_up': 'up',
-                'dodge_down': 'down'
-            }[action]
-            player_stats = player_dodge(player_stats, direction, tiles=[])
-
-        # Attack
-        elif action == 'attack':
-            now = time.time()
-            if now - last_player_attack >= player_attack_cooldown:
-                last_player_attack = now
-                # Target nearest enemy
-                alive = [e for e in current_enemies if e['HP'] > 0]
-                if alive:
-                    target = min(alive, key=lambda e: (e['x'] - player_stats['x']) ** 2 + (e['y'] - player_stats['y']) ** 2)
-                    dmg = compute_damage(player_stats.get('attack', 10), target.get('defence', 0))
-                    target['HP'] -= dmg
-                    print(f"You strike {target['name']} for {dmg}. HP left: {max(target['HP'], 0)}")
-                    # Stun briefly if still alive
-                    if target['HP'] > 0:
-                        target['stun_until'] = time.time() + 0.3
-
-        # Items
-        elif action in ('use_item_1', 'use_item_2', 'use_item_3'):
-            idx = {'use_item_1': 0, 'use_item_2': 1, 'use_item_3': 2}[action]
-            if idx < len(inventory):
-                item = inventory.pop(idx)
-                print(f"You used {item}.")
-                # Simple effect: heal 20 if potion-like
-                if item.lower() == "potion":
-                    player_stats['HP'] = min(player_stats['HP'] + 20, player_stats['Level'] * 120)
-                    print(f"HP healed. Current HP: {player_stats['HP']}")
-            else:
-                print("No item in that slot.")
-
-        # Music control
+        if action in ('up','down','left','right'):
+            dx = {'left':-1,'right':1,'up':0,'down':0}[action]
+            dy = {'up':-1,'down':1,'left':0,'right':0}[action]
+            nx, ny = player_stats['x']+dx, player_stats['y']+dy
+            if check_collision(nx, ny, tiles):
+                player_stats['x'], player_stats['y'] = nx, ny
+                steps += 1
+                player_stats['steps'] = steps
+                if random.random() < 0.05:
+                    if 'battle' in controller.tracks:
+                        music_play(controller, 'battle')
+                    return player_stats, inventory, tiles, "battle"
+        elif action == 'interact':
+            tid = get_tile_id(player_stats['x'], player_stats['y'], tiles)
+            print("Interacted with:", tid)
+            time.sleep(0.6)
+        elif action == 'open_menu':
+            in_game_menu(player_stats, inventory, controller)
         elif action == 'next_track':
-            controller.next_track()
+            music_next(controller)
         elif action == 'prev_track':
-            controller.prev_track()
+            music_prev(controller)
 
-        time.sleep(0.02)
+def in_game_menu(player_stats, inventory, controller):
+    opts = ["Resume", "Items", "Save", "Load", "MP3 Player", "Status", "Quit to Title"]
+    sel = 0
+    while True:
+        os.system("cls")
+        print("=== Menu ===")
+        for i,o in enumerate(opts):
+            print(f"{'> ' if i==sel else '  '}{o}")
+        k = msvcrt.getch()
+        if k == b'\xe0':
+            k2 = msvcrt.getch()
+            if k2 == b'H': sel = (sel-1) % len(opts)
+            elif k2 == b'P': sel = (sel+1) % len(opts)
+        elif k == b'\r':
+            ch = opts[sel]
+            if ch == "Resume":
+                return
+            if ch == "Items":
+                print("Inventory:", inventory or "<empty>"); input("Enter to continue")
+            if ch == "Save":
+                save_game(player_stats, inventory, "field", [], controller); input("Enter")
+            if ch == "Load":
+                p,inv,gm,tl = load_game(controller); input("Enter")
+            if ch == "MP3 Player":
+                mp3_player_menu(controller)
+            if ch == "Status":
+                print(player_stats); input("Enter")
+            if ch == "Quit to Title":
+                music_stop(controller)
+                raise SystemExit("ReturnToTitle")
 
-#GAME LOOP
-#- Start in field mode
-#- While game is running:
-#  - If mode is "field" then run field mode loop
-#  - Else if mode is "battle" then run battle mode loop
-#  - Else if mode is "end game" then end game
+def battle_mode(player_stats, inventory, controller):
+    # spawn a simple enemy; add walk sprite placeholder
+    enemies = [{
+        'name': 'Shadow',
+        'HP': 30,
+        'attack': 8,
+        'defence': 3,
+        'speed': 1,
+        'x': player_stats['x'] + 2,
+        'y': player_stats['y'],
+        'walk': ['◈','◇'],   # placeholder frames
+        'sprite': ['◈','◇'],
+        'state': 'idle'
+    }]
+    # player sprites - simple frames for walk
+    player_sprite = {'walk': ['⇩','↧'], 'frames':['⇩','↧']}
+
+    if 'battle' in controller.tracks:
+        music_play(controller, 'battle')
+
+    frame = 0
+    last_update = time.time()
+    while True:
+        # update animation frame every 0.3s
+        now = time.time()
+        if now - last_update > 0.3:
+            frame += 1
+            last_update = now
+
+        render_battle(player_stats, enemies, frame, player_sprite)
+
+        action = read_action()
+        if action is None:
+            # simulate enemies moving toward player slowly
+            for e in enemies:
+                if e['x'] > player_stats['x']: e['x'] -= e['speed']
+                elif e['x'] < player_stats['x']: e['x'] += e['speed']
+                if e['y'] > player_stats['y']: e['y'] -= e['speed']
+                elif e['y'] < player_stats['y']: e['y'] += e['speed']
+            # check enemy attacks
+            for e in enemies:
+                dist = abs(e['x']-player_stats['x']) + abs(e['y']-player_stats['y'])
+                if dist <= 1 and random.random() < 0.15:
+                    dmg = max(0, e['attack'] - player_stats.get('defence',0))
+                    player_stats['HP'] -= dmg
+                    print(f"{e['name']} hits you for {dmg}!"); time.sleep(0.6)
+            # check end conditions
+            if all(e['HP'] <= 0 for e in enemies):
+                print("You won the battle!")
+                if 'town' in controller.tracks:
+                    music_play(controller, 'town')
+                return player_stats, inventory, "field"
+            if player_stats['HP'] <= 0:
+                print("You died...")
+                music_stop(controller)
+                return player_stats, inventory, "end game"
+            time.sleep(0.08)
+            continue
+
+        if action == 'pause':
+            print("Battle paused. press p to resume.")
+            while True:
+                if read_action() == 'pause':
+                    break
+                time.sleep(0.02)
+            continue
+        if action in ('up','down','left','right'):
+            dx = {'left':-1,'right':1,'up':0,'down':0}[action]
+            dy = {'up':-1,'down':1,'left':0,'right':0}[action]
+            player_stats['x'] += dx; player_stats['y'] += dy
+        elif action == 'attack':
+            # attack nearest alive enemy
+            alive = [e for e in enemies if e['HP'] > 0]
+            if alive:
+                target = min(alive, key=lambda e: abs(e['x']-player_stats['x'])+abs(e['y']-player_stats['y']))
+                dmg = max(0, player_stats.get('attack',10) - target.get('defence',0))
+                target['HP'] -= dmg
+                print(f"You hit {target['name']} for {dmg}!"); time.sleep(0.5)
+        elif action == 'open_menu':
+            in_game_menu(player_stats, inventory, controller)
+        elif action == 'next_track':
+            music_next(controller)
+        elif action == 'prev_track':
+            music_prev(controller)
+
+# --- Main ---
 def main():
-    #- Define variables:
-    #  - Frame tiles
-    #  - Character sprites (walk, attack, dodge in 4 directions)
-    #  - Player stats (defence, spirit, attack, magic, mana, HP, EXP, Level, Munny(cash))
-    #  - Game mode is "field" at start
-    #  - Player alive is true
-    #  - Tiles is list of tiles for map
-    #  - Music tracks is in dictionary of track names and file paths
-    #  - Current track is none
-    #  - Track index is 0
-    #  - Pause state is false
-
-    frame_tiles = {}
-    character_sprites = {'walk': {
-        '⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣠⣾⣿⡇⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-        '⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣴⡿⢻⣿⠇⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-        '⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣠⡀⠀⢀⣀⢠⣾⠿⠀⢸⣿⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-        '⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣼⣿⣗⣴⣿⣿⣿⠟⢀⡄⣸⡏⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-        '⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣼⡿⢿⣿⠟⣿⣿⠋⢠⠋⡇⣿⡇⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-        '⣀⣀⣤⣤⣤⣤⣄⣀⣤⣀⣰⣿⠁⠘⠋⠀⠿⠁⠀⠛⠒⢡⣿⠇⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-        '⢿⣿⣍⠉⠉⠉⠉⠛⠛⠛⠛⠋⠉⠉⠉⠀⠀⠀⠀⠀⠀⢸⣿⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-        '⠀⠈⠻⣿⣦⡈⠫⡍⢉⠗⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢸⣿⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-        '⠀⠀⠀⠀⠙⢿⣦⣌⠉⠀⠀⠀⠀⠀⠀⠀⠀⣀⠀⠀⠀⢸⣿⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣠⣤⠀⠀',
-        '⠀⠀⠀⠀⠀⠀⠙⢿⣧⡀⠀⠀⠀⠀⠀⠀⠀⡿⠄⠀⠀⢀⣿⣷⣶⣶⣶⣶⣶⣶⣶⣶⣶⣶⣿⣿⣤⡀',
-        '⠀⠀⠀⠀⠀⠀⠀⠈⢿⣧⠀⠀⠀⠀⠀⠀⣻⡧⠤⠐⠒⠒⠊⢉⣉⣀⣠⣤⣤⣤⣶⣶⠿⠟⠛⠛⠋⠁',
-        '⠀⠀⠀⠀⠀⠀⠀⠀⠸⣿⡄⠀⠀⠀⠀⡏⠀⠰⢾⣿⣿⣿⣿⠟⠛⠛⠉⠉⠉⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-        '⠀⠀⠀⠀⠀⠀⠀⠀⠀⢻⣧⠀⠀⠀⠀⠙⢄⡀⠀⠈⠉⠙⢻⣷⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-        '⠀⠀⠀⠀⠀⠀⠀⠀⠀⠘⣿⡆⠀⠀⠀⠀⠀⠈⠑⠒⠠⠤⣾⣷⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-        '⠀⠀⠀⠀⠀⠀⠀⠀⠀⣰⡟⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣿⣿⣧⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-        '⠀⠀⠀⠀⠀⠀⠀⠀⣸⡿⠃⣠⣦⠀⠀⠀⠀⠀⢀⡀⠀⠀⣿⡏⢻⣷⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-        '⠀⠀⠀⠀⠀⠀⠀⢠⣿⠃⢠⣾⣿⣧⠀⠀⠀⠀⠻⠗⠀⣀⣿⣧⠀⢻⣧⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-        '⠀⠀⠀⠀⠀⠀⢠⣿⠇⣴⣿⠋⠘⣿⣶⣶⡶⠿⠿⠛⠛⠛⢻⣿⣷⣴⣿⣿⢿⣿⠀⠀⠀⠀⠀⠀⠀⠀',
-        '⠀⠀⠀⠀⠀⢀⣾⡏⣴⣿⠃⠀⢸⣿⠀⠀⠀⢠⣶⣶⣆⠀⠈⣿⣟⣿⣿⡿⣿⡅⠀⠀⠀⠀⠀⠀⠀⠀',
-        '⠀⢠⣶⣶⠿⣿⣿⣿⡿⠁⠀⠀⢸⣿⣤⣤⣤⣿⠏⠘⣿⣷⣾⠿⢿⣿⣿⠛⠛⠃⠀⠀⠀⠀⠀⠀⠀⠀',
-        '⠀⠀⠙⢻⣿⣿⡿⣿⡇⠀⠀⠀⠀⠉⣹⣿⠉⠉⠀⠀⠀⣿⡇⠀⠀⠉⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-        '⠀⠀⠀⢸⣿⡿⢿⣿⠇⠀⠀⠀⠀⠀⣿⣿⠀⠀⠀⠀⠀⣿⣷⡶⠿⠿⢿⣦⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-        '⠀⠀⠀⠈⠉⠀⠀⠀⠀⣠⣶⣿⠿⣿⣿⣿⠀⠀⠀⠀⠀⠿⠿⠿⠻⠿⠛⠃⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-        '⠀⠀⠀⠀⠀⠀⠀⠀⣾⣿⣷⡾⠿⠛⠋⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-    }, 'attack': {
-        
-        '⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣠⣾⣿⡇⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-        '⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣴⡿⢻⣿⠇⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-        '⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣠⡀⠀⢀⣀⢠⣾⠿⠀⢸⣿⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-        '⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣼⣿⣗⣴⣿⣿⣿⠟⢀⡄⣸⡏⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-        '⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣼⡿⢿⣿⠟⣿⣿⠋⢠⠋⡇⣿⡇⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-        '⣀⣀⣤⣤⣤⣤⣄⣀⣤⣀⣰⣿⠁⠘⠋⠀⠿⠁⠀⠛⠒⢡⣿⠇⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-        '⢿⣿⣍⠉⠉⠉⠉⠛⠛⠛⠛⠋⠉⠉⠉⠀⠀⠀⠀⠀⠀⢸⣿⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-        '⠀⠈⠻⣿⣦⡈⠫⡍⢉⠗⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢸⣿⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-        '⠀⠀⠀⠀⠙⢿⣦⣌⠉⠀⠀⠀⠀⠀⠀⠀⠀⣀⠀⠀⠀⢸⣿⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣠⣤⠀⠀',
-        '⠀⠀⠀⠀⠀⠀⠙⢿⣧⡀⠀⠀⠀⠀⠀⠀⠀⡿⠄⠀⠀⢀⣿⣷⣶⣶⣶⣶⣶⣶⣶⣶⣶⣶⣿⣿⣤⡀',
-        '⠀⠀⠀⠀⠀⠀⠀⠈⢿⣧⠀⠀⠀⠀⠀⠀⣻⡧⠤⠐⠒⠒⠊⢉⣉⣀⣠⣤⣤⣤⣶⣶⠿⠟⠛⠛⠋⠁',
-        '⠀⠀⠀⠀⠀⠀⠀⠀⠸⣿⡄⠀⠀⠀⠀⡏⠀⠰⢾⣿⣿⣿⣿⠟⠛⠛⠉⠉⠉⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-        '⠀⠀⠀⠀⠀⠀⠀⠀⠀⢻⣧⠀⠀⠀⠀⠙⢄⡀⠀⠈⠉⠙⢻⣷⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-        '⠀⠀⠀⠀⠀⠀⠀⠀⠀⠘⣿⡆⠀⠀⠀⠀⠀⠈⠑⠒⠠⠤⣾⣷⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-        '⠀⠀⠀⠀⠀⠀⠀⠀⠀⣰⡟⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣿⣿⣧⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-        '⠀⠀⠀⠀⠀⠀⠀⠀⣸⡿⠃⣠⣦⠀⠀⠀⠀⠀⢀⡀⠀⠀⣿⡏⢻⣷⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-        '⠀⠀⠀⠀⠀⠀⠀⢠⣿⠃⢠⣾⣿⣧⠀⠀⠀⠀⠻⠗⠀⣀⣿⣧⠀⢻⣧⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-        '⠀⠀⠀⠀⠀⠀⢠⣿⠇⣴⣿⠋⠘⣿⣶⣶⡶⠿⠿⠛⠛⠛⢻⣿⣷⣴⣿⣿⢿⣿⠀⠀⠀⠀⠀⠀⠀⠀',
-        '⠀⠀⠀⠀⠀⢀⣾⡏⣴⣿⠃⠀⢸⣿⠀⠀⠀⢠⣶⣶⣆⠀⠈⣿⣟⣿⣿⡿⣿⡅⠀⠀⠀⠀⠀⠀⠀⠀',
-        '⠀⢠⣶⣶⠿⣿⣿⣿⡿⠁⠀⠀⢸⣿⣤⣤⣤⣿⠏⠘⣿⣷⣾⠿⢿⣿⣿⠛⠛⠃⠀⠀⠀⠀⠀⠀⠀⠀',
-        '⠀⠀⠙⢻⣿⣿⡿⣿⡇⠀⠀⠀⠀⠉⣹⣿⠉⠉⠀⠀⠀⣿⡇⠀⠀⠉⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-        '⠀⠀⠀⢸⣿⡿⢿⣿⠇⠀⠀⠀⠀⠀⣿⣿⠀⠀⠀⠀⠀⣿⣷⡶⠿⠿⢿⣦⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-        '⠀⠀⠀⠈⠉⠀⠀⠀⠀⣠⣶⣿⠿⣿⣿⣿⠀⠀⠀⠀⠀⠿⠿⠿⠻⠿⠛⠃⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-        '⠀⠀⠀⠀⠀⠀⠀⠀⣾⣿⣷⡾⠿⠛⠋⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-    }, 'dodge': {
-        
-        '⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣠⣾⣿⡇⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-        '⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣴⡿⢻⣿⠇⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-        '⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣠⡀⠀⢀⣀⢠⣾⠿⠀⢸⣿⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-        '⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣼⣿⣗⣴⣿⣿⣿⠟⢀⡄⣸⡏⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-        '⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣼⡿⢿⣿⠟⣿⣿⠋⢠⠋⡇⣿⡇⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-        '⣀⣀⣤⣤⣤⣤⣄⣀⣤⣀⣰⣿⠁⠘⠋⠀⠿⠁⠀⠛⠒⢡⣿⠇⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-        '⢿⣿⣍⠉⠉⠉⠉⠛⠛⠛⠛⠋⠉⠉⠉⠀⠀⠀⠀⠀⠀⢸⣿⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-        '⠀⠈⠻⣿⣦⡈⠫⡍⢉⠗⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢸⣿⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-        '⠀⠀⠀⠀⠙⢿⣦⣌⠉⠀⠀⠀⠀⠀⠀⠀⠀⣀⠀⠀⠀⢸⣿⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣠⣤⠀⠀',
-        '⠀⠀⠀⠀⠀⠀⠙⢿⣧⡀⠀⠀⠀⠀⠀⠀⠀⡿⠄⠀⠀⢀⣿⣷⣶⣶⣶⣶⣶⣶⣶⣶⣶⣶⣿⣿⣤⡀',
-        '⠀⠀⠀⠀⠀⠀⠀⠈⢿⣧⠀⠀⠀⠀⠀⠀⣻⡧⠤⠐⠒⠒⠊⢉⣉⣀⣠⣤⣤⣤⣶⣶⠿⠟⠛⠛⠋⠁',
-        '⠀⠀⠀⠀⠀⠀⠀⠀⠸⣿⡄⠀⠀⠀⠀⡏⠀⠰⢾⣿⣿⣿⣿⠟⠛⠛⠉⠉⠉⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-        '⠀⠀⠀⠀⠀⠀⠀⠀⠀⢻⣧⠀⠀⠀⠀⠙⢄⡀⠀⠈⠉⠙⢻⣷⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-        '⠀⠀⠀⠀⠀⠀⠀⠀⠀⠘⣿⡆⠀⠀⠀⠀⠀⠈⠑⠒⠠⠤⣾⣷⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-        '⠀⠀⠀⠀⠀⠀⠀⠀⠀⣰⡟⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣿⣿⣧⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-        '⠀⠀⠀⠀⠀⠀⠀⠀⣸⡿⠃⣠⣦⠀⠀⠀⠀⠀⢀⡀⠀⠀⣿⡏⢻⣷⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-        '⠀⠀⠀⠀⠀⠀⠀⢠⣿⠃⢠⣾⣿⣧⠀⠀⠀⠀⠻⠗⠀⣀⣿⣧⠀⢻⣧⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-        '⠀⠀⠀⠀⠀⠀⢠⣿⠇⣴⣿⠋⠘⣿⣶⣶⡶⠿⠿⠛⠛⠛⢻⣿⣷⣴⣿⣿⢿⣿⠀⠀⠀⠀⠀⠀⠀⠀',
-        '⠀⠀⠀⠀⠀⢀⣾⡏⣴⣿⠃⠀⢸⣿⠀⠀⠀⢠⣶⣶⣆⠀⠈⣿⣟⣿⣿⡿⣿⡅⠀⠀⠀⠀⠀⠀⠀⠀',
-        '⠀⢠⣶⣶⠿⣿⣿⣿⡿⠁⠀⠀⢸⣿⣤⣤⣤⣿⠏⠘⣿⣷⣾⠿⢿⣿⣿⠛⠛⠃⠀⠀⠀⠀⠀⠀⠀⠀',
-        '⠀⠀⠙⢻⣿⣿⡿⣿⡇⠀⠀⠀⠀⠉⣹⣿⠉⠉⠀⠀⠀⣿⡇⠀⠀⠉⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-        '⠀⠀⠀⢸⣿⡿⢿⣿⠇⠀⠀⠀⠀⠀⣿⣿⠀⠀⠀⠀⠀⣿⣷⡶⠿⠿⢿⣦⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-        '⠀⠀⠀⠈⠉⠀⠀⠀⠀⣠⣶⣿⠿⣿⣿⣿⠀⠀⠀⠀⠀⠿⠿⠿⠻⠿⠛⠃⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-        '⠀⠀⠀⠀⠀⠀⠀⠀⣾⣿⣷⡾⠿⠛⠋⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-    }}
-    player_stats = {
-        'defence': 10, 'spirit': 10, 'attack': 10, 'magic': 10,
-        'mana': 50, 'HP': 100, 'EXP': 0, 'Level': 1, 'Munny': 0,
-        'x': 0, 'y': 0, 'invulnerable': False
-    }
+    # minimal map: list of strings (same length rows)
+    map_data = [
+        "####################",
+        "#..................#",
+        "#..N....C..........#",
+        "#..................#",
+        "#.......D..........#",
+        "####################",
+    ]
+    # initial player
+    player_stats = {'x': 3, 'y': 2, 'HP': 120, 'attack': 12, 'defence': 5, 'Level':1, 'steps':0}
     tiles = []
-    inventory = []
-    game_mode = "field"
-    player_alive = True
-    map_g = [
-'⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⡀⠀⠀⠀⠀⠀⠀⣀⢀⠀⡀⠀⣀⡀⠀⢀⠀⢀⣀⣀⣀⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀', 
-'⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣶⣾⣿⣶⣄⠀⠀⢈⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡆⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-'⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⠀⣀⡄⢀⡀⠀⢀⣀⠀⣠⡀⢐⣾⣿⣿⣿⣧⣀⣀⣼⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣧⣄⣀⣀⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-'⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢈⣾⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⢿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡇⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-'⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⢠⡀⣄⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠾⠿⢿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡿⠿⣿⢿⣿⣿⣿⣿⣿⣿⣿⣿⡷⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-'⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢰⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠪⠀⠀⣉⢿⣏⢯⡽⣹⢏⡾⣽⣿⣿⣿⣿⡇⠀⠀⠀⠀⢚⠉⢴⣻⣿⣿⣿⣿⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-'⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣀⣰⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣵⣖⣦⣼⣎⡞⣧⢏⡷⢫⣞⣽⣿⣿⣿⣿⣟⣢⣄⣠⣤⣾⣶⣶⣿⣿⣿⣿⣿⡥⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-'⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢼⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣳⡝⣮⡝⣞⡳⣎⢿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-'⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢼⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣷⣿⣶⣿⠌⠳⠩⠟⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡄⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-'⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢸⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⢧⣛⡾⣿⣿⣿⣿⣿⡆⠀⠀⠀⣹⣟⡼⣳⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠂⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-'⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣼⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡿⠏⠁⠙⢿⣿⣿⣿⣿⣶⣤⣴⣤⣿⣎⢷⣫⢿⠿⣿⢿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣷⣴⣦⣤⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-'⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⢿⠀⠀⠀⢰⣿⣿⣿⣿⣿⣿⣿⣿⡏⡾⣧⡽⣮⢿⡼⣯⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-'⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣀⡀⣠⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣶⣀⣀⣠⣼⣿⣿⣿⣿⣿⣿⣿⣿⣿⣷⣭⣷⣿⣾⣽⣻⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣦⣦⣄⣤⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-'⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣾⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⢞⡭⣟⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡄⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-'⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣾⣽⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡇⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-'⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣿⣿⣿⣿⣿⣿⣿⣿⣿⣯⢏⡷⣭⢻⡜⣧⢻⣜⡻⣜⢧⡻⣜⢧⡻⣜⢧⡻⣝⢯⡽⡭⢯⡝⣮⢳⡝⣶⡹⣎⠷⣎⢷⢳⣎⢷⣚⢶⡹⢿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠂⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-'⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢠⣾⣿⣿⣿⣿⣿⣿⣿⣿⡟⣮⢳⣭⢳⡝⣮⢳⣎⢷⡹⣎⢷⡹⣎⢷⡹⣎⢷⡙⠎⠲⠉⠇⢻⣜⢧⣛⢶⡹⣎⠿⣜⠯⣞⡼⣣⢟⡮⣝⡻⣿⢿⡿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣷⣶⣦⣤⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-'⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣿⣿⣿⣿⣿⡟⣯⣛⢧⣻⣜⡳⣎⢷⡹⣎⠷⣎⢷⡹⣎⢷⡹⣎⢷⡹⣎⢯⣽⠂⠀⠀⠀⢡⡻⢮⡝⣮⢳⣭⢻⣜⡻⣼⡱⣏⢾⣱⣏⣳⡝⣮⠽⣽⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡇⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-'⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣽⣿⣿⣿⣿⣛⢶⡹⣎⠷⣜⡳⣝⢮⡳⣭⢻⡜⣧⢻⡜⣧⢻⡜⣧⣿⣞⣷⣾⡧⢤⡤⣤⣛⢯⡳⣝⢮⡳⣎⠷⣎⣵⣳⠿⠏⣙⠭⡌⡉⠻⣼⢻⡜⡿⣿⠿⡿⢿⡿⣿⢿⡿⣿⣿⢿⣿⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-'⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣸⣿⡯⣝⢮⡝⣮⢳⣭⢻⣜⡳⣝⢮⡳⣭⢳⡝⣮⢳⡝⣮⢳⡝⣾⣿⣿⣿⣿⣟⣧⢻⡴⣫⢞⡵⣫⢞⡵⣫⢻⡜⣿⡀⠀⠰⡃⠀⠀⠓⢸⣻⣷⣹⢳⣭⣛⡽⣣⢟⡼⣣⢟⣵⢺⣿⣿⠠⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-'⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣸⣿⢷⡹⢮⡝⣮⣓⠎⠳⠌⠓⡹⢎⡷⣭⢳⡝⣮⢳⡝⣮⢳⡝⣾⡹⣟⢿⣻⢻⡜⣧⢳⡝⣮⢳⡝⣮⢳⣭⢳⣿⣼⣿⣿⡀⠇⠀⠀⠀⢸⡷⣎⡗⡯⢶⡹⢶⡹⣎⢷⡹⣞⡼⣳⢾⣧⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-'⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣸⡿⣷⡹⢧⣛⠶⣏⠆⠀⠀⠀⢘⣯⡜⣮⢳⡝⣮⢳⡝⣮⢳⡝⣶⡹⣎⠷⣭⢳⡝⣮⢳⡝⣮⢳⡝⣮⣳⣮⣷⣮⣿⣿⡿⠁⣧⠀⠀⡆⢀⣿⣧⣛⣭⢳⡝⣧⢻⡜⣧⣛⢶⡹⣎⣿⡗⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-'⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣤⣀⣠⣼⡟⠣⢏⢷⡭⣛⢧⡖⡤⣄⠤⣌⢷⡹⣎⢷⡹⣎⢷⡹⣎⢷⡹⢶⡹⣎⠿⣜⢧⡻⣼⢣⣽⠶⠛⠋⢉⠀⠤⠤⠤⠤⠤⠠⠖⠃⠀⠀⠆⢸⣧⢻⡜⣮⢳⡝⣮⢳⡝⣶⡹⣎⢷⡹⢮⡝⣷⢶⣶⣆⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-'⠀⠀⠀⠀⠀⠀⠀⠀⠠⣿⣿⣿⡿⢃⠀⠁⢌⡺⢼⡹⣞⡼⢳⣎⠿⣜⢧⡻⣜⢧⡻⣜⢧⡻⣜⢧⣛⢧⡻⣜⡻⣜⢧⡻⣼⡟⣧⠀⠀⠀⡹⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢸⣯⣻⡜⣧⢻⡜⣧⢻⡜⣧⡝⣮⢳⡝⣧⢻⡼⣿⡿⣯⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-'⠀⠀⠀⠀⠀⠀⠀⠀⠀⣿⣿⢯⢿⣆⡾⣦⢦⡟⢧⣛⢶⣹⢳⣎⠿⣜⢧⡻⣜⢧⡻⣜⢧⡻⣜⢧⣛⢮⡳⣭⢳⡝⣮⢳⢧⣿⣜⣿⢶⡦⢵⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣼⣟⢶⡹⣎⢷⡻⣜⢧⣛⢶⡹⣎⢷⡹⣎⢷⣣⢗⣿⠳⣯⢷⣶⣷⠄⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-'⠀⠀⠀⠀⠀⠀⠀⠀⢀⣿⣛⢮⡳⣎⢷⡹⢶⡹⢧⣛⢮⣓⢯⣜⡻⣜⢧⡻⣜⢧⡻⣜⢧⡻⣼⢣⡟⣮⢳⣭⢳⣝⢮⣛⢶⣣⢟⡽⣿⡯⠍⠂⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠂⢸⣟⢮⡳⣝⢮⡳⣝⢮⡝⣮⢳⡝⣮⢳⡝⡾⠼⣭⠞⡽⣎⠿⣯⣟⡀⠀⢀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-'⠀⠀⠀⠀⠀⠀⠀⠀⣸⣿⣿⣷⣿⣮⢷⡹⢧⣛⢧⣛⢮⡝⡾⣜⡳⣝⢮⡳⣝⢮⡳⣝⢮⡳⣭⢳⡝⣮⢳⣎⠷⣎⢷⡹⣞⡼⣝⠾⣽⣧⢨⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢻⣯⢏⡷⣹⢎⡷⣹⢮⡝⣮⢳⡝⣮⢳⡽⣹⢻⡜⣯⢳⣭⢻⡼⣣⢟⣿⣿⣷⠤⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-'⠀⠀⠀⠀⠀⠀⠀⠀⢸⣿⣿⣿⣿⡟⣮⡝⣧⣛⢮⡝⣮⡝⣾⣱⢻⡜⣧⢻⡜⣧⢻⡜⣧⣻⣼⣧⡿⣼⣷⣮⡿⢼⣧⡿⣼⡵⢯⡿⠿⠏⢸⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⡀⢿⣯⡟⣼⢣⡟⣼⢣⡟⡼⢣⡟⣼⢣⡟⣼⢣⡟⣼⢣⣟⡲⣏⢾⡱⣏⡟⣿⣿⡅⢀⠀⠀⣀⢀⣀⣀⡀⢀⢀⣀⠀⢀⣀⣀⣀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-'⠀⠀⠀⠀⠀⠀⠀⠀⢀⠤⠠⠍⠙⢿⣷⣿⣷⣯⢞⡽⣲⣿⣷⣿⣷⡿⣜⢧⡻⣜⢧⣻⣾⠁⡤⠀⠒⠀⠀⠂⠀⠒⠂⠀⠀⠀⠀⠀⠀⠐⠋⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⡇⢸⣿⢞⡵⣫⢞⡵⣫⡜⠁⠃⢸⣧⢻⡜⣧⢻⡜⣧⣛⢶⡹⣎⢷⡹⢮⡝⡶⣭⢿⣻⢿⣿⣿⢿⡿⣻⠿⣿⣿⣿⡇⢈⠀⠀⢸⡦⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-'⠀⠀⠀⠀⠀⠀⠀⠀⠸⡅⠀⠀⠀⣾⣿⣿⣿⣿⡮⡷⣽⣿⣿⣿⣿⣿⡜⣧⢻⡜⣧⢿⣟⠉⡇⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣀⠀⡀⠀⠁⣼⣿⢎⡷⣹⢎⡷⢣⡳⣄⣤⣧⢯⡳⣝⢮⡳⣝⢶⡹⣎⢷⡹⢮⡝⣧⢻⠵⣎⠷⣭⢞⡶⣹⢮⠽⣭⢻⣻⡻⣿⣇⡈⠂⠠⠔⠁⠀⠀⠀⠀⠀⠀⠀⠀⢠⣠⡀⣀⣰⣤⣤⣄⣤⣀⣠⣄⠀⠀',
-'⠀⠀⠀⠀⠀⠀⠀⠀⣼⠀⠀⠀⡀⠻⣿⣿⣿⡛⠉⠙⠚⣿⣿⣿⣿⣿⢞⡵⣫⢞⡵⣿⣷⢈⠇⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢰⢁⣶⣶⣷⣿⡿⣝⢮⡳⣝⢮⡝⣧⢻⡜⣶⡹⣎⢷⡹⣎⢷⡹⣎⢷⡹⢮⡝⣧⢻⡜⡯⣝⢮⡻⣜⡳⣞⡵⣫⢻⡜⣧⢏⡷⣳⡞⣿⣿⣿⣶⠀⠀⠀⠀⠀⠀⠀⠀⠀⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣏⡀',
-'⠀⠀⠀⠀⠀⠀⠀⠀⣼⠄⠀⠀⠄⢼⣿⣿⣿⡇⡀⠀⠀⣿⣿⣿⣿⣿⣎⣷⣹⣾⢭⢿⡟⠉⠆⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠰⣿⣿⣿⣿⡻⣜⢧⡻⣜⢧⡻⣜⢧⣛⢶⡹⣎⢷⡹⣎⢷⡹⣎⢷⡹⢧⡻⣜⢧⡻⢵⣫⢞⡵⣫⢵⣎⠷⣭⢳⡝⣮⡝⡶⣭⣻⠼⠿⡟⠟⠀⠀⠀⠀⠀⣀⣠⡀⠄⡈⡉⡛⡙⢻⣳⡽⢮⡝⡾⢿⣿⡟⠂',
-'⠀⠀⠀⠀⢠⣦⣷⣦⠹⡀⠀⠀⠂⢻⣿⣛⡿⣿⣷⣟⣷⡿⠋⢏⢹⣿⣿⣿⣿⣿⣽⣿⣿⢀⠃⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢰⠀⣿⣻⡿⣝⡳⣝⢮⡳⣝⢮⡳⡽⢮⡝⣮⢳⡝⣮⢳⡝⣮⢳⡝⣮⡝⣧⢻⡜⣧⣛⢧⡝⣮⢳⡝⣾⣸⠻⣜⢧⣛⢶⣹⢳⣽⣯⢤⠂⠉⡇⠀⠀⠀⠀⠰⣿⣿⣿⠠⡅⠀⠀⣡⢈⣿⣟⣧⢻⣙⢯⡿⣷⠀',
-'⠀⠀⠀⠀⠸⠿⣿⠟⢸⠁⠀⠀⢇⠈⣿⠿⣽⣿⡞⣭⢟⣻⣌⡤⣞⣿⣿⣿⣿⣿⣿⣿⣿⠀⢦⢀⣀⢀⢠⠀⣀⣀⠀⠀⠀⢀⣠⢠⡤⠄⡀⠀⠀⠀⠀⠀⠀⠰⡄⠙⠛⠛⠛⠋⠛⠚⠷⡽⢮⡽⣹⢧⡻⣜⢧⡻⣜⢧⡻⣜⢧⣛⢶⡹⣎⢷⡹⢶⡹⢮⡝⣮⢳⡝⣶⢣⡟⣮⢳⡝⣮⣷⣯⣾⣧⠀⠙⠒⠾⡤⠤⠤⠦⠤⠬⡩⢥⡴⠃⠀⠀⠘⠦⠬⠉⠛⠛⢯⣷⡿⣇⠀',
-'⢠⣷⣶⣦⣰⠓⠒⠒⠋⠀⠀⠀⠈⠑⠂⠀⢀⠸⣿⣜⣻⢶⣻⢿⣿⣿⣿⣿⣿⡇⣤⠩⠄⢹⣿⣶⣿⣶⣾⣿⣿⡀⡇⠀⠀⡇⣺⣾⣿⡿⢱⠀⠀⠀⠀⠀⠀⠀⠈⠉⠉⠀⠀⠈⠉⠁⡆⣹⣷⢭⡳⣎⢷⡹⣎⢷⡹⣎⢷⡹⢮⡝⣮⢳⡝⣮⡝⣧⣛⢧⡻⣜⢧⡻⣜⢧⡻⣜⢧⡻⣽⣿⣿⣿⣿⠁⠀⠀⢠⠇⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠂⣾⣿⣿⣯⠀',
-'⣘⣿⣿⣏⢹⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢌⡀⠻⠾⠷⠷⠿⠺⠾⢳⠟⠻⠟⠂⡎⠀⠠⣐⢿⢿⡿⢿⣿⣿⣿⡉⠣⠤⠤⠏⢿⣿⣿⡷⢦⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⡇⢼⣿⣾⣵⣏⢾⡱⣏⢾⡱⣏⢾⣙⢧⡻⣜⢧⣛⢶⡹⢶⡹⣎⢷⡹⣎⢷⡹⣎⢷⡹⣎⢷⣿⣿⣿⣿⡏⠀⠢⠤⢼⠓⠒⠒⠲⡄⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⠀⣟⣿⣿⡇⠀',
-'⢻⣿⣿⡟⠺⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠁⠀⠁⠀⠈⠀⠉⠁⠁⠀⠀⠀⠀⠀⠀⠀⠁⠀⠀⣄⣿⣿⣿⣿⡆⠀⠀⠀⠀⠉⠉⠀⡎⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⡀⣾⣿⣿⣿⣏⢾⡱⣏⢾⡱⣏⠾⣭⢞⡵⣫⢞⡭⣞⡝⣧⢻⡜⣧⢻⡜⣧⢻⡜⣧⢻⡜⣧⢿⣿⣿⣿⡇⢐⠀⠀⢸⠀⠀⠀⠀⢹⡄⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢺⡀⢿⣿⣿⣧⠀',
-'⣘⣿⣿⣷⠄⠄⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠿⣿⣿⣿⣿⣇⠀⠀⠀⠀⠀⠀⠀⠃⠀⠀⣠⠀⣀⠀⣀⠀⠀⠀⠀⣀⣀⡀⡀⡇⠻⡿⠿⠿⣿⡜⣧⢻⡜⣧⣛⢶⡹⣜⢧⡻⣜⢧⡻⢵⣫⢞⡵⣫⢞⡵⣫⢞⡵⣫⢞⡵⣛⠾⣿⢿⡿⣷⣈⠒⢠⠘⢀⣀⣠⠤⠞⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⡇⠘⠟⠙⠋⠀',
-'⢴⣿⣿⣻⣦⣤⣽⣧⣤⣤⣅⣥⣴⣄⣨⣍⠑⡆⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠰⣿⣿⣿⣿⡆⠀⠀⠀⠀⠀⠀⣾⣿⣶⣾⣿⣷⣿⣿⣆⠸⠀⠀⠀⠿⣿⣷⣿⣾⡍⠀⠀⡆⢼⣿⡱⣏⢾⡱⣏⢾⡱⣏⢾⡱⣏⠾⣭⢳⢧⡻⣜⢧⡻⣜⢧⡻⣜⢧⡻⡼⣭⢻⡜⣧⢻⡽⣿⣿⣿⡟⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣷⠀⠀⠀⠀⠀',
-'⢹⡿⣿⣽⣿⣿⣿⣿⣿⣿⢻⣿⣿⣿⣿⣿⠄⡇⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⡆⠻⠿⡿⠿⣧⣤⣀⣀⣠⣀⣄⠸⠿⠿⡿⢿⣿⣿⣿⣿⠀⠤⡤⠄⣞⠻⡻⠿⠁⠧⡀⡠⠂⣼⣿⡻⣜⢧⡻⣜⡧⠛⡜⠣⠝⢾⣹⢎⡿⣜⡳⣝⢮⡳⣝⢮⡳⡽⣞⣷⣽⣞⣧⡻⣜⢧⡟⣿⣿⡿⣻⣀⣁⠐⠀⠀⡀⠀⣀⢀⡀⠀⢀⠒⠦⠤⠤⠴⠋⠀⠀⠀⠀⠀',
-'⢹⣿⣻⢖⡻⣟⢿⡻⣟⢯⡳⣎⣟⡻⡿⣿⠈⡇⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠉⠙⠀⠤⣿⣿⣿⣿⣿⣿⣿⡋⠆⠈⠁⠀⢸⣿⣿⣿⣿⣿⣿⣿⢬⠈⠀⠈⢳⠀⠀⠠⣾⣿⣏⡷⣹⢎⡷⣹⣷⡁⠀⠀⠀⠸⣟⢮⡳⣎⢷⡹⣎⢷⡹⣎⠷⣽⣻⣿⣿⣿⡷⣝⣮⢳⣝⡳⣎⢷⣹⢻⣝⡻⣟⠿⣟⡿⣟⣟⡿⢿⣿⣷⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-'⢹⣿⡹⣎⢷⡹⣎⢷⡹⣎⢷⣹⢲⣝⡳⣿⠄⠉⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠋⠻⠿⠿⠟⠿⠟⠿⠏⡌⠀⠀⠈⣜⠛⠛⠛⠿⠛⠿⠟⣸⠃⠀⠀⠘⠤⠤⢄⣉⣙⣛⠙⡓⢿⣼⢳⣮⣧⣀⣀⣠⡾⣏⢾⡱⣏⢾⡱⣏⢾⡱⣏⡻⣜⢿⡻⣟⢿⡻⣜⢧⡻⣜⡳⣝⢮⣓⢯⣜⡳⣭⢻⣜⡳⣝⢾⣻⢟⡿⣿⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-'⣼⣯⣷⡹⢮⡝⣮⢳⡝⣮⢳⣭⢳⣎⠷⣿⠩⡇⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠉⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠉⢡⢸⣯⡳⣞⡼⣭⢏⡷⣹⢎⡷⣹⢎⡷⣹⢎⡷⣹⢎⡷⣹⢎⡷⣹⢎⡷⣹⢎⡷⣭⢳⡝⣮⡝⡾⣜⡳⣭⢳⣎⢷⡹⣎⢧⣏⣿⣿⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-'⣸⣿⢶⡹⢧⡻⣵⢫⡞⣵⢫⡖⣯⢺⡝⣿⡄⠀⠀⣀⠀⠀⢀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⠀⠀⠀⠀⠤⡄⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⡴⠒⢆⠀⡖⠂⡀⢀⣀⣰⣿⢳⣣⢟⣬⢻⡜⣧⢻⡜⣧⢻⡜⣧⢻⡜⣧⢻⡜⣧⢻⡜⣧⢻⡜⣧⢻⡜⣧⢻⣜⡳⣞⡵⣫⢵⡫⣗⢮⡳⣝⢮⣗⣮⣿⡯⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-'⢼⣿⣧⣛⢧⣛⢶⣫⢞⡵⣫⢞⡵⣫⢿⣾⣻⡶⣶⣶⣶⣾⣷⣾⣿⣷⣷⣾⣷⣶⣾⣶⣿⣿⣶⣾⣷⣾⣷⣶⣖⢸⡆⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⡇⢺⣿⣿⠿⣟⡿⣟⢿⡹⢧⡻⣜⠾⣜⢧⡻⣜⢧⡻⣜⢧⡻⣜⢧⡻⣜⢧⡻⣜⢧⡻⣜⢧⡻⣜⢧⡻⣜⡳⣎⢷⣣⢏⡷⣭⢳⡝⣮⢳⡝⡾⢼⣿⣯⣿⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-'⠸⡿⣿⣿⠾⡿⠶⠿⠾⠷⠿⢮⢷⣯⡞⡽⢧⢿⣯⣿⣿⠿⠿⠿⠛⠻⡟⠻⠻⠻⠿⠿⢻⢛⠋⠛⠻⠛⠻⠛⡋⣸⠅⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠠⡄⢾⣿⣏⠿⣱⡝⣮⢳⡝⣧⢻⣜⡻⣜⢧⡻⣜⢧⡻⣜⢧⡻⣜⢧⡻⣜⢧⡻⣜⢧⡻⣜⢧⡻⣜⢧⡻⣜⡳⣝⠾⡼⣹⠶⣭⢳⡝⣮⢳⣽⡞⠋⠉⠉⠉⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-'⠀⠀⠀⠁⢰⠒⠊⠐⠒⠂⠀⢀⠀⢻⣾⡝⣯⢻⣿⣿⠤⡄⠀⠉⠉⠉⠉⠀⠀⠉⠀⠉⠉⠀⠈⠁⠀⠁⠉⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠇⣹⣿⢎⡿⣱⢻⡜⣧⢻⣜⡳⣎⢷⡹⣎⢷⡹⣎⢷⡹⣎⢷⡹⣎⢷⡹⣎⢷⡹⣎⢷⡹⣎⢷⡹⣎⠷⣭⢳⣭⢻⡵⣋⡷⣭⢳⣝⣮⢳⣿⡏⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-'⠀⠀⠀⠀⠸⣄⣀⣀⡀⠀⠀⠈⢆⠙⠛⠛⠾⠟⠟⠻⠁⡹⠀⠀⠀⠀⠀⠀⠀⣠⠤⠤⠤⠤⠤⠤⢤⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣠⠒⢰⣀⣀⣠⣆⣀⡀⣤⣀⣄⡀⠐⣆⢀⣄⣀⣽⣿⣹⢺⢵⣫⢞⡵⣫⢎⡷⣹⢎⡷⣹⢎⡷⣹⢎⡷⣹⢎⡷⣹⢎⣷⡹⣎⣷⠞⠋⠙⠛⣯⣿⣿⣿⣿⣿⣾⣿⣿⣿⣽⣿⣿⣾⣿⣿⣿⣿⡄⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-'⠀⠀⠀⠀⠀⠀⠀⠀⢳⠄⠀⠀⠀⠉⠉⠀⠈⠉⠉⠉⠉⠀⠀⠀⠀⠀⠀⠀⢰⡧⠀⠀⠀⠀⠀⠀⠀⣵⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣇⢰⣿⣿⣿⣿⣿⣿⡿⣿⠿⣞⠿⡿⣿⢻⢧⡻⣝⢧⣳⢏⡾⣼⣹⣺⣕⣯⣞⣵⣫⣞⣵⣫⣞⣵⣫⣞⣵⣫⣞⣵⣫⣶⣹⣿⣿⡖⠀⠀⠠⢿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-'⠀⠀⠀⠀⠀⠀⠀⠀⢺⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣀⠠⠤⠾⠁⠀⠀⠀⠀⠀⠀⠀⠘⠒⠤⠤⣀⠀⠀⠀⠀⠀⠀⠀⠻⢄⣉⡉⠛⠻⣿⣜⡳⣭⢻⡼⣫⠷⣭⠿⣮⡳⣝⣮⣷⠟⠉⠡⠯⠥⠀⠠⠩⠉⠡⠤⠅⠤⠤⠥⠫⠤⠭⠤⠥⠤⢄⠉⠉⠉⠁⠀⠀⠀⠀⢿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣶⡄⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-'⠀⠀⠀⠀⠀⠀⠀⠀⢺⡄⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢸⡅⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢸⡇⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣇⢰⣿⣮⣳⣭⣳⣝⣣⣟⣼⣛⣶⣝⣮⣽⣿⡉⢇⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣩⠆⠀⠀⠀⠀⠀⠀⠀⣸⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠃⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-'⠀⠀⠀⠀⢀⣀⣀⣀⡼⠇⠀⠀⠀⣀⣀⡄⣄⠀⠀⠀⢀⡤⠤⠴⠟⠃⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢸⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠦⠀⠉⠩⣀⠭⠅⠉⠉⠀⠤⠈⠈⠉⠁⠠⠤⠋⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣰⠋⠉⠉⠉⠀⠀⠀⠀⣸⣿⣿⣿⣿⣿⣿⣿⣿⡛⠍⢫⢹⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣦⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-'⠀⠀⠀⠀⣸⠅⠀⠀⠀⠀⠀⠀⣠⣿⣿⣿⡿⠄⠀⠀⢸⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢸⡄⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣹⠂⠀⠀⠀⠀⠀⠀⠸⣿⣿⣿⣿⣿⣿⣿⣿⣿⣇⡌⣀⡞⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡤⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-'⠀⠀⠀⠀⣽⠃⠀⠀⠀⠀⠀⠀⠈⠛⣿⡿⠟⠂⠀⠀⢸⡇⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⠤⠤⠤⠤⠴⠤⠴⠟⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣶⣶⣶⣦⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢮⠀⠀⠀⠀⠀⠀⠀⢈⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡅⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-'⠀⠀⠀⠀⢹⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢿⠇⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢸⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠒⣾⣿⣿⣿⡆⠀⠀⠀⠀⠀⠀⠀⠀⠀⣀⣀⣾⠀⠀⠀⠀⠀⠀⠀⠀⢿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡷⠂⠀⠀⠀⠀⠀⠀⠀⠀',
-'⠀⠀⠀⠀⠘⠶⠦⠤⣄⠀⠀⠀⠀⠀⠀⠀⢀⠤⠖⠒⠛⠀⠀⠀⠀⠀⠀⠀⠀⢠⠤⠤⠴⠟⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠰⣶⣶⣿⡤⠀⠀⠀⠀⠀⠊⠉⠁⠀⠀⠀⠀⠀⠀⠀⠀⣿⠉⠈⠉⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠋⠉⠉⢻⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣖⡂⠀⠀⠀⠀⠀⠀⠀⠀',
-'⠀⠀⠀⠀⠀⠀⠀⠀⢹⡇⠀⠀⠀⠀⠀⠀⢾⡄⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢻⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢰⣿⣿⣿⣯⡂⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⡀⢀⣷⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡇⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-'⠀⠀⠀⠀⢄⣀⡤⠤⡞⠁⠀⠀⣠⠶⠲⠒⠛⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣾⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠠⣐⣶⣶⣄⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠒⠛⠋⠃⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⡟⠉⠉⠉⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠁⠉⠀⣹⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣄⠘⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-'⠀⠀⠀⠀⣼⠀⠀⠀⠀⠀⠀⠀⣼⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣿⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⣿⣿⣿⣯⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠘⡇⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠘⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠇⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-'⠀⠀⠀⠀⠙⠓⠒⠆⢦⠀⠀⠀⣿⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢸⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠙⠉⠑⠀⠀⠀⠀⢶⣶⣶⣷⡤⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠐⣇⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠁⠀⠀⠀⠁⠀⠀⠀⠈⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-'⠀⠀⠀⠀⠀⠀⠀⠀⢼⡆⠀⠀⣿⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢸⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⢻⣿⡿⣿⡇⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⡏⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-'⠀⠀⠀⠀⢰⡤⠆⠦⠾⠁⠀⠀⣺⠆⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠉⠉⠒⢶⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠉⠉⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣷⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-'⠀⠀⠀⠀⠻⡆⠀⠀⠀⠀⠀⠀⢻⠇⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢸⡆⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣰⡿⠇⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-'⠀⠀⠀⠀⠙⠣⠤⠴⠖⠢⠤⠴⠟⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠛⠒⠒⠚⠒⠚⠛⠒⠒⠒⠒⠒⠛⠓⠒⠉⠉⠉⠑⠒⠈⠙⠓⠐⠘⠋⠉⠉⢱⠄⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⡞⠉⠉⠉⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-'⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠸⣇⡀⠀⠀⠀⢀⠀⠀⠀⠀⣀⣨⡧⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-'⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠉⠉⠉⠉⠈⠉⠉⠉⠁⠀⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀']
-    map_ug = [
-'⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⠀⠀⠀⠀⠀⠀⣀⢀⠀⡀⠀⣀⡀⡀⢀⠀⢠⣀⣀⣀⡀⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-'⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣾⣾⣿⣶⣄⠀⠀⢘⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡆⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-'⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⠀⣀⡄⢀⢀⠀⢀⣀⢀⣀⣀⢐⣿⣿⣿⣿⣯⣀⣰⣼⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣧⣄⣀⣀⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-'⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢈⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡇⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-'⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⢠⡀⣄⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡗⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-'⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢰⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡅⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-'⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⡀⢀⣀⣰⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡇⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-'⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢼⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-'⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢼⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡄⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-'⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣸⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠂⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-'⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣽⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣷⣶⣦⣤⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-'⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-'⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣀⡀⣠⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣧⣦⣄⣤⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-'⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡄⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-'⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡃⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-'⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠃⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-'⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢠⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣷⣶⣦⣤⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-'⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡇⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-'⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡿⠏⣹⣭⣭⡉⠻⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠃⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-'⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣽⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡀⠀⠰⣿⣿⣿⣧⢸⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠠⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-'⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣸⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡀⣿⣿⣿⣟⣸⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣧⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-'⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣸⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠃⣿⣿⣿⡇⢨⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡟⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-'⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣤⣀⣀⣼⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠿⠛⠋⢩⣬⣬⣬⣭⣤⣧⣦⣴⣿⣿⣿⡇⢸⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣷⣶⣶⣦⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-'⠀⠀⠀⠀⠀⠀⠀⠀⢠⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣧⠀⠀⢀⣹⣿⣿⡿⣿⡿⣿⢿⣿⣻⣯⣿⡇⢻⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣯⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-'⠀⠀⠀⠀⠀⠀⠀⠀⠀⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣶⡦⢿⣿⣿⣽⣷⢿⣻⣯⣷⡿⣽⣿⣇⣸⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣷⣶⣷⠄⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-'⠀⠀⠀⠀⠀⠀⠀⠀⢀⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡧⢙⣿⣿⢾⣯⣿⣟⣷⡿⣽⣟⣿⡇⢹⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣟⡀⠀⢀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-'⠀⠀⠀⠀⠀⠀⠀⠀⣸⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣧⢸⣿⣿⢿⣽⣾⣻⣾⣟⣿⣽⣿⠇⢺⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣷⠄⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-'⠀⠀⠀⠀⠀⠀⠀⠀⣸⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡿⢿⣿⣿⣿⣿⣿⣿⠿⠏⢸⣿⣿⣻⣟⣾⣟⣷⡿⣽⣾⣿⡧⢾⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡅⣀⠀⠀⣀⢀⣀⣀⡀⣀⣀⣀⠀⢠⣀⢀⣀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-'⠀⠀⠀⠀⠀⠀⠀⠀⢠⣤⣿⣭⡙⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠉⣬⣿⣿⣾⣿⣾⣶⣾⣦⣶⣿⣶⣷⣾⣶⣶⣿⣿⡿⣽⣯⣿⢾⣯⡿⣟⣷⣿⡇⢸⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡅⢼⣿⣿⣿⣥⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-'⠀⠀⠀⠀⠀⠀⠀⠀⢸⣿⣿⣿⡇⣾⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣟⠙⣿⣿⡿⣟⣿⣻⢿⣻⡿⣟⣿⣻⣟⣿⣻⣟⣿⡽⣟⣯⣷⢿⣻⣷⣿⡿⣿⠟⠃⣼⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣇⡘⢻⡿⠟⠋⠀⠀⠀⠀⠀⠀⠀⠀⢠⣠⡀⣀⣰⣤⣤⣄⣤⣀⣠⣄⡀⠀',
-'⠀⠀⠀⠀⠀⠀⠀⠀⣼⣿⣿⣿⡇⢹⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⢈⣿⣿⣟⣿⣽⢿⣻⣿⣽⢿⣯⣿⣽⣯⣿⣽⡾⣿⣻⣯⢿⣻⣯⣿⢁⣶⣷⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣶⠄⠀⠀⠀⠀⠀⠀⠀⠀⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣏⡀',
-'⠀⠀⠀⠀⠀⠀⠀⠀⢾⣿⣿⣿⡏⢸⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡟⠉⣿⣿⣻⣾⢯⣿⣟⣾⣟⣯⣷⡿⣾⢷⡿⣞⣿⣟⣷⣿⣻⣯⣿⣿⠸⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠿⢿⡿⠟⠀⠀⠀⠀⠀⣠⣠⡀⠀⣙⣋⣿⡛⢿⣿⣿⣿⣿⣿⣿⣿⣟⠃',
-'⠀⠀⠀⠀⢠⣦⣶⣤⡹⣿⣿⣿⡇⢻⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⢰⣿⣿⢿⣽⣿⣻⣾⢯⣿⢯⣷⣿⣻⣟⣿⢿⣽⡾⣟⣾⣟⣷⢿⣿⠀⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⢤⣿⣿⡇⠀⠀⠀⠀⠸⣿⣿⣿⠠⣿⣿⣿⣿⢈⣿⣿⣿⣿⣿⣿⣿⣷⠀',
-'⠀⠀⠀⠀⠸⠿⣿⠟⢸⣿⣿⣿⣏⠉⣿⠿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠀⠿⢿⡿⣷⢿⠷⣿⣿⣯⣿⣻⣾⡿⢿⡾⠿⣯⣿⣟⣿⢾⣻⣿⣿⡆⠙⠛⠛⢻⡛⠻⠟⠿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣧⠈⠙⠛⢿⣤⣤⣤⣶⣦⣭⣩⣅⣴⣿⣿⣿⣿⣤⣭⣍⣛⠛⣿⣿⣿⡇⠀',
-'⢠⣷⣶⣦⣨⣷⣷⣶⣿⣿⣿⣻⣿⣷⣾⣶⣦⠸⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠏⢷⣽⡌⢱⣿⣶⣿⣶⣾⣷⣿⠈⣿⣿⣿⡏⣺⣾⣿⡷⢻⣿⣟⣾⡿⣯⣷⡿⣿⣿⣿⣿⣿⣿⣿⣿⡦⢽⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠁⠀⠀⢠⣿⣿⣿⣿⢿⣿⣿⣿⢿⣿⣻⡾⣟⣿⣿⣿⣿⠂⣾⣿⣿⣿⠀',
-'⣚⣿⣿⡏⢹⣿⣿⣿⣻⣟⣾⣟⣷⣿⣻⣿⣏⡀⠻⠿⢿⠿⠿⠻⢿⣻⠟⠿⢟⠀⣾⣿⣧⡸⢿⢿⡿⢿⣿⣿⣿⡉⢿⠿⠿⠟⣿⣿⣿⡷⢺⣿⡿⣽⣟⣯⣷⣿⣻⣽⡾⣿⣽⣯⢿⣿⡇⢼⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡏⣰⣤⣤⣼⠛⠛⠛⠻⣿⣷⡿⣾⢿⣳⣿⣻⡿⣽⣾⣻⣿⢡⣿⣿⣿⡇⠀',
-'⢻⣿⣿⡟⢻⣿⣿⡾⣿⣽⣻⣾⣟⣾⣯⢿⣿⣿⣶⣾⣿⣿⣿⣶⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣷⣤⣿⣿⣿⣿⡇⠀⠀⠀⠀⠉⠉⠀⣿⣿⣿⢯⣿⣽⡾⣷⣟⣯⣿⣟⣾⣽⡿⣿⡇⣼⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡇⣿⣿⣿⣿⠀⠀⠀⠀⢹⣿⣿⣻⣟⣯⣷⣿⣻⣯⣷⣿⣿⡀⢿⣿⣿⣧⠀',
-'⣸⣿⣿⣷⠘⣿⣿⣷⣯⣿⣿⣯⣿⣿⣽⣾⣯⣿⢿⣿⣻⡿⣟⣿⢿⣻⣟⣿⣻⣟⣿⢯⣿⡽⣟⣿⣿⡿⣿⣿⣿⣿⣧⠀⠀⠀⠀⠀⠀⠀⠿⠿⠿⡾⣿⣿⡷⣿⣿⣿⡽⣿⣿⢿⡷⣿⠇⠻⣿⠿⠿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣷⣙⠛⢛⠛⣀⣀⣀⣠⣾⣿⣿⣻⣟⣿⢯⣿⣻⣯⣿⣽⣿⡇⠘⠟⠙⠋⠀',
-'⢴⣿⣿⣿⣧⣭⣽⣭⣯⣥⣏⣭⣬⣥⣹⣌⠙⣿⣿⡾⣿⣽⢿⣯⣿⢿⣽⣯⣿⣽⣾⢿⣯⣿⢿⣽⣿⠤⣿⣿⣿⣿⡆⠀⠀⠀⠀⠀⠀⣾⣿⣶⣾⣿⣷⣾⣷⣇⢹⣿⣿⣿⠟⣿⣷⣿⣶⣿⣷⣷⡆⢼⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡏⢹⣿⣿⣿⣿⣟⣷⣿⣻⣾⣟⣯⣷⣿⣞⣿⣿⣿⠂⠀⠀⠀⠀',
-'⢹⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠄⣿⣿⣿⣽⣾⢿⣽⡾⣟⣿⢾⣳⣿⢾⣟⣷⡿⣯⣿⣿⡆⠻⢿⡿⢿⣧⣤⣀⣀⣠⣀⣤⠸⠿⠿⣿⣿⣿⣿⣿⣿⠸⡿⠟⠿⣎⠻⣿⠿⡍⠿⡿⠿⢇⣼⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣈⣛⠛⠛⠛⣛⢛⣛⢛⡛⠛⢟⠛⠻⠿⠻⠿⠋⠀⠀⠀⠀⠀',
-'⢹⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠈⣿⣿⣷⢿⡾⣟⣯⣿⣟⣯⣿⢿⣽⣟⣯⣿⣽⢿⣾⣽⣿⣿⣿⣶⡤⣿⣿⣿⣿⣿⣿⣿⡃⢶⣿⣿⣷⢺⣿⣿⣿⣿⣿⣿⣷⢼⣿⣿⣿⣗⠀⠀⠠⣾⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣷⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-'⢹⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠄⣻⣿⣯⣿⣟⣿⣽⣾⢯⣿⢾⣟⣿⢾⣻⣷⣻⣯⣷⢿⣞⣯⣿⣿⣗⠻⠿⣿⠿⣿⠿⠿⢇⣼⣿⣿⣿⣜⠛⠛⡛⡿⠛⡿⡟⣘⣿⣿⣿⣿⣤⣀⣀⣉⣛⣟⠛⡟⢿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-'⣸⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠀⣿⣿⣟⣷⡿⣽⣾⢯⣿⢯⣿⣻⣾⢿⣻⡷⣿⣽⣯⣿⣻⣽⡾⣟⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣳⡿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⢿⣞⣿⢿⣿⣿⣿⣿⣿⣿⣗⢸⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡄⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-'⣸⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡄⠿⢿⡿⣯⠿⢿⢯⢿⣿⡿⠿⢿⠽⠿⠿⢿⠿⡾⠿⠿⠿⢿⠿⠿⣿⣾⣯⣿⣽⣾⢯⣷⣿⣳⣿⡽⣟⣯⣿⡽⣯⣿⣽⣯⢿⣾⢯⣿⣿⡟⠛⢻⠛⡛⠿⡟⣟⣃⣸⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡯⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-'⢼⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣶⣶⣷⣶⣾⣶⣾⣿⣶⣷⣶⣾⣶⣶⣶⣾⣾⣶⣾⣷⣾⣾⣶⣶⢘⣿⣿⡾⣷⢿⣻⣟⣾⣟⣷⡿⣟⣯⣷⡿⣟⣷⡿⣾⡿⣯⣿⢯⣿⡇⣺⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-'⠸⣿⣿⣿⠿⡿⠿⡿⠿⠿⠿⣿⢿⣿⣿⣿⣿⣿⣿⣿⣿⢿⡿⢿⠟⢻⠟⠻⠿⠿⢿⢿⠻⢛⠛⢻⡻⣟⠻⢿⣫⢸⣿⣿⢿⣽⡿⣯⣿⣽⣾⢯⣿⣟⣯⣷⡿⣿⡽⣟⣷⣿⣻⣽⡿⣿⡇⢾⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡟⠛⠛⠉⠉⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-'⠀⠀⠀⠁⢼⣷⣾⣷⣷⣾⣿⣷⠄⢻⣿⣿⣿⣿⣿⣿⠆⣼⣿⣿⣷⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⢿⣻⣯⣿⣟⣷⢿⣾⢿⣳⣿⣻⣾⢿⣽⣿⣻⣽⣾⣟⣷⣿⣿⣅⣹⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣏⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-'⠀⠀⠀⠀⠸⣿⣿⣿⣿⣿⣿⣿⣆⠙⠻⠛⠿⡟⡟⠻⣃⣸⣿⣿⣿⣿⣿⣿⣿⣿⠿⠿⠿⠿⠿⠟⢿⣿⣿⣿⣿⣿⣯⣿⣟⣷⣿⣾⣿⣿⠟⣹⣟⡿⣻⣟⣛⡻⣟⣛⣟⡛⠛⣟⢛⣟⣇⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠟⠛⠛⠻⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡄⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-'⠀⠀⠀⠀⠀⠀⠀⠀⢻⣿⣿⣿⣿⣿⣿⣿⣿⣷⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣧⠀⠀⠀⠀⠀⠀⠀⣹⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡇⢰⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡖⠀⠀⠰⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-'⠀⠀⠀⠀⠀⠀⠀⠀⢺⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡿⠿⠿⠟⠁⠀⠀⠀⠀⠀⠀⠀⠘⠛⠿⠿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣄⣉⣉⡛⢻⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡟⣩⣳⣿⣇⣀⣨⣭⣯⣥⣤⣅⣤⣭⣥⣿⣤⣭⣥⣧⣭⣌⠉⠉⠉⠁⠀⠀⠀⠀⢿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣶⣄⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-'⠀⠀⠀⠀⠀⠀⠀⠀⢸⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡅⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠼⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡗⢰⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡉⢿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠗⠀⠀⠀⠀⠀⠀⠀⣸⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡇⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-'⠀⠀⠀⠀⢀⣀⣀⣀⣼⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡿⠿⠿⠟⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢸⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣦⣨⣍⣭⣉⣯⣭⣭⣭⣭⣠⣬⣍⣯⣧⣥⣥⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡿⠏⠉⠉⠉⠀⠀⠀⠀⣾⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣦⠄⠀⠀⠀⠀⠀⠀⠀⠀',
-'⠀⠀⠀⠀⣺⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⢁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢸⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠒⠀⠀⠀⠀⠀⠀⠘⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡥⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-'⠀⠀⠀⠀⣽⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠓⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣦⣤⣴⣤⣴⣤⣤⣾⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣇⡀⠀⠀⠀⠀⠀⠀⠨⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣅⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-'⠀⠀⠀⠀⢸⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠖⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢺⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠄⠀⠀⠀⠀⠀⠀⠀⢿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡷⠂⠀⠀⠀⠀⠀⠀⠀⠀',
-'⠀⠀⠀⠀⠘⠿⠿⠿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡿⠛⠛⠛⠀⠀⠀⠀⠀⠀⠀⠀⢀⣤⣤⣴⣾⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣯⣉⠈⠉⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠛⠉⠉⣻⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣗⡂⠀⠀⠀⠀⠀⠀⠀⠀',
-'⠀⠀⠀⠀⠀⠀⠀⠀⢹⣿⣿⣿⣿⣿⣿⣿⣿⣇⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢻⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣷⠄⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡧⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-'⠀⠀⠀⠀⢄⣂⣢⣠⣾⣿⣿⣿⣿⠿⠻⠛⠛⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣽⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠏⠉⠉⠉⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠉⠉⠈⣹⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣅⠘⠁⠈⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-'⠀⠀⠀⢀⣾⣿⣿⣿⣿⣿⣿⣿⣿⡒⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣹⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡇⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠘⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠇⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-'⠀⠀⠀⠀⠙⠟⠟⠿⢿⣿⣿⣿⣷⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢸⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣇⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠁⠀⠀⠀⠁⠀⠀⠀⠉⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-'⠀⠀⠀⠀⠀⠀⠀⠀⢼⣿⣿⣿⣿⠂⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢸⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡏⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-'⠀⠀⠀⠀⢰⣤⣤⣦⣼⣿⣿⣿⣿⠇⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠉⠉⠛⢿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣗⠂⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-'⠀⠀⠀⠀⠿⣿⣿⣿⣿⣿⣿⣿⣿⠇⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢸⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡿⠆⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-'⠀⠀⠀⠀⠙⠻⠿⠿⠟⠻⠿⠿⠛⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠛⠛⠛⠛⠛⠛⠛⠛⠛⠛⠛⠛⠛⠋⠛⠉⠉⠉⠙⠛⠉⠙⠛⠙⠙⠋⠉⠙⠹⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡏⠉⠉⠉⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-'⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠨⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡧⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-'⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠉⠉⠈⠉⠈⠉⠉⠉⠁⠁⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀']
-    # Basic demo map content (walls, chest, npc, door)
-    for x in range(-5, 6):
-        setup_tile(tiles, "wall", x, -3)
-        setup_tile(tiles, "wall", x, 3)
-    for y in range(-2, 3):
-        setup_tile(tiles, "wall", -6, y)
-        setup_tile(tiles, "wall", 6, y)
-    setup_tile(tiles, "chest", 0, 0)
-    setup_tile(tiles, "NPC", 2, 0)
-    setup_tile(tiles, "door", -5, 0)
+    # place tiles from map chars
+    for y, row in enumerate(map_data):
+        for x, ch in enumerate(row):
+            if ch == '#':
+                setup_tile(tiles, "wall", x, y)
+            elif ch == 'C':
+                setup_tile(tiles, "chest", x, y)
+            elif ch == 'N':
+                setup_tile(tiles, "NPC", x, y)
+            elif ch == 'D':
+                setup_tile(tiles, "door", x, y)
 
-    # Audio setup
+    # discover music files in same folder as script
     this_dir = os.path.dirname(os.path.abspath(__file__))
     requested = {
         "battle": "Organization Battle.wav",
         "town": "Twilight Town.wav",
-        "destiny": "Destiny Islands.wav",
-        "final1": "KH-CoM Final Battle1.wav",
-        "final2": "KH-CoM Final Battle2.wav"
+        "destiny": "Destiny Islands.wav"
     }
     tracks = {}
-    for key, fname in requested.items():
-        found = locate_music_file(fname, this_dir)
-        if found:
-            tracks[key] = found
-            print(f"Found {key}: {found}")
+    for k, fname in requested.items():
+        f = locate_music_file(fname, this_dir)
+        if f:
+            tracks[k] = f
+            print(f"Found {k}: {f}")
         else:
-            print(f"Missing {key}: tried '{fname}' in {this_dir}")
+            print(f"Missing {k}: tried {fname}")
 
     controller = MusicController(tracks)
-    controller.list_tracks()
+    music_list(controller)
 
-    # === START MENU ===
-    try:
-        choice = start_menu()
-    except KeyboardInterrupt:
-        print("Goodbye.")
-        return
-
-    if choice == 0:  # Start New Game
-        print("Starting new game...")
-    elif choice == 1:  # Load Saved Game
+    # start menu
+    choice = start_menu()
+    if choice == 1:
         p, inv, gm, tl = load_game(controller)
-        if p is None:
-            print("No save file found. Starting new game instead.")
-        else:
-            player_stats, inventory, game_mode, tiles = p, inv, gm, tl
-            print("Loaded previous save file.")
-    elif choice == 2:  # MP3 Player
+        if p:
+            player_stats.update(p)
+    elif choice == 2:
         mp3_player_menu(controller)
-    elif choice == 3:  # Quit
-        print("Goodbye!")
-        return
+    elif choice == 3:
+        print("Goodbye."); return
 
-    # Command interface (optional, for debugging music and save/load)
-    print("Commands: play <name>, pause, resume, stop, list, quit, next, prev, save, load, status, mp3")
-    while True:
-        try:
-            cmd = input("> ").strip().split(maxsplit=1)
-        except (EOFError, KeyboardInterrupt):
-            break
-        if not cmd:
-            continue
-        op = cmd[0].lower()
-        arg = cmd[1].strip() if len(cmd) > 1 else None
-
-        if op == "play" and arg:
-            controller.play(arg)
-        elif op == "pause":
-            controller.pause()
-        elif op == "resume":
-            controller.resume()
-        elif op == "stop":
-            controller.stop()
-        elif op == "next":
-            controller.next_track()
-        elif op == "prev":
-            controller.prev_track()
-
-        elif op == "play1" and arg:
-            controller.play1(arg)
-        elif op == "pause1":
-            controller.pause1()
-        elif op == "resume1":
-            controller.resume1()
-        elif op == "stop1":
-            controller.stop1()
-        elif op == "next1":
-            controller.next1()
-        elif op == "prev1":
-            controller.prev1()
-
-        elif op == "play2" and arg:
-            controller.play2(arg)
-        elif op == "pause2":
-            controller.pause2()
-        elif op == "resume2":
-            controller.resume2()
-        elif op == "stop2":
-            controller.stop2()
-        elif op == "next2":
-            controller.next2()
-        elif op == "prev2":
-            controller.prev2()
-
-        elif op == "play3" and arg:
-            controller.play3(arg)
-        elif op == "pause3":
-            controller.pause3()
-        elif op == "resume3":
-            controller.resume3()
-        elif op == "stop3":
-            controller.stop3()
-        elif op == "next3":
-            controller.next3()
-        elif op == "prev3":
-            controller.prev3()
-
-        elif op == "status":
-            controller.status()
-        elif op == "list":
-            controller.list_tracks()
-        elif op == "quit":
-            controller.stop(); controller.stop1(); controller.stop2(); controller.stop3()
-            break
-        elif op == "save":
-            save_game(player_stats, inventory, game_mode, tiles, controller)
-        elif op == "load":
-            p, inv, gm, tl = load_game(controller)
-            if p is not None:
-                player_stats, inventory, game_mode, tiles = p, inv, gm, tl
-        elif op == "mp3":
-            mp3_player_menu(controller)
-        else:
-            print("Unknown command.")
-
-    # Main game run
+    # main loop simple dispatcher
+    game_mode = "field"
+    inventory = []
     while True:
         if game_mode == "field":
-            try:
-                player_stats, inventory, tiles, game_mode = field_mode(player_stats, inventory, tiles, controller)
-            except SystemExit as e:
-                if str(e) == "ReturnToTitle":
-                    print("Returning to title...")
-                    return
-                else:
-                    raise
-
+            res = field_mode(player_stats, inventory, tiles, controller, map_data)
+            if res:
+                player_stats, inventory, tiles, game_mode = res
         elif game_mode == "battle":
             player_stats, inventory, game_mode = battle_mode(player_stats, inventory, controller)
-
         elif game_mode == "end game":
-            print("Thank you for playing!")
+            print("Game over. Exiting.")
             break
 
 if __name__ == "__main__":
