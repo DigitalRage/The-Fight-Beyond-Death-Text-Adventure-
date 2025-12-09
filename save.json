@@ -1,15 +1,18 @@
 {
   "player_stats": {
-    "x": 40,
-    "y": 29,
-    "HP": 120,
+    "x": 46,
+    "y": 30,
+    "HP": 117,
     "attack": 12,
     "defence": 5,
     "Level": 1,
-    "steps": 1
+    "steps": 47,
+    "exp": 0,
+    "munny": 0,
+    "items": []
   },
   "inventory": [],
   "game_mode": "field",
   "tiles": [],
-  "current_track": "destiny"
+  "current_track": "town"
 }

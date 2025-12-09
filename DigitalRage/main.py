@@ -100,7 +100,7 @@ def check_collision(x, y, tiles):
     return get_tile_id(x, y, tiles) not in ("wall", "blocked")
 
 def render_map(map_data, player_x, player_y):
-    """Render the map with player position overlaid."""
+    #Render the map with player position overlaid.
     os.system("cls")
     if not map_data or len(map_data) == 0:
         print("[No map data]")
@@ -191,6 +191,8 @@ def start_menu():
         elif k == b'\r':
             return sel
 
+
+
 # --- Battle / rendering frames ---
 def render_battle(player_stats, enemies, frame_index, player_sprite):
     os.system("cls")
@@ -280,7 +282,7 @@ def in_game_menu(player_stats, inventory, controller):
             if ch == "Resume":
                 return
             if ch == "Items":
-                print("Inventory:", inventory or "<empty>"); input("Enter to continue")
+                print("Inventory:", inventory or "empty"); input("Enter to continue")
             if ch == "Save":
                 save_game(player_stats, inventory, "field", [], controller); input("Enter")
             if ch == "Load":
@@ -305,7 +307,9 @@ def battle_mode(player_stats, inventory, controller):
         'y': player_stats['y'],
         'walk': ['◈','◇'],   # placeholder frames
         'sprite': ['◈','◇'],
-        'state': 'idle'
+        'state': 'idle', 
+        'exp': 20,
+        'drop': 'potion'
     }]
     # player sprites - simple frames for walk
     player_sprite = {'walk': ['⇩','↧'], 'frames':['⇩','↧']}
@@ -382,8 +386,16 @@ def battle_mode(player_stats, inventory, controller):
 def main():
     # Use map from maps.py
     map_data = map1
+    items = {
+        'potion': {'heal': 100},
+        'hi-potion': {'heal': 500},
+        'x-potion': {'heal': 9999},
+        'ether': {'mana': 50},
+        'hi-ether': {'mana': 200},
+        'elixir': {'heal': 9999, 'mana': 9999}
+    }
     # initial player (started in middle-ish area)
-    player_stats = {'x': 40, 'y': 30, 'HP': 120, 'attack': 12, 'defence': 5, 'Level':1, 'steps':0}
+    player_stats = {'x': 40, 'y': 30, 'HP': 120, 'attack': 12, 'defence': 5, 'Level':1, 'steps':0, 'exp':0, 'munny':0, 'items':[]}
     tiles = []
     # place tiles from map chars
     for y, row in enumerate(map_data):
