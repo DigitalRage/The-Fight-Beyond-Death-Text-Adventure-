@@ -110,7 +110,7 @@ def render_map(map_data, player_x, player_y):
         line = ""
         for col_idx, char in enumerate(row):
             if row_idx == player_y and col_idx == player_x:
-                line += "@"  # Player marker
+                line += "⇩"  # Player marker
             else:
                 line += char
         print(line)
