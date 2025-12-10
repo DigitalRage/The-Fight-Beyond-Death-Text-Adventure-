@@ -1,14 +1,14 @@
 {
   "player_stats": {
-    "x": 51,
+    "x": 46,
     "y": 31,
-    "HP": 111,
+    "HP": 105,
     "max_hp": 120,
     "attack": 12,
     "defence": 5,
     "Level": 1,
-    "steps": 138,
-    "exp": 80,
+    "steps": 31,
+    "exp": 60,
     "munny": 0,
     "items": []
   },
