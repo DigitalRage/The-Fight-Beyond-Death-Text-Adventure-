@@ -12,6 +12,41 @@ from maps import map1
 
 SAVE_FILE = "save.json"
 
+# Items database (global)
+ITEMS = {
+    'potion': {'heal': 100},
+    'hi-potion': {'heal': 500},
+    'x-potion': {'heal': 1000},
+    'elixir': {'heal': 9999}
+}
+
+# Battle grid defaults
+BATTLE_W = 100
+BATTLE_H = 50
+
+# --- Inventory helpers (stacked items) ---
+def add_item(inventory, name, qty=1):
+    for it in inventory:
+        if it['name'] == name:
+            it['count'] += qty
+            return
+    inventory.append({'name': name, 'count': qty})
+
+def remove_item(inventory, name, qty=1):
+    for i, it in enumerate(inventory):
+        if it['name'] == name:
+            if it['count'] > qty:
+                it['count'] -= qty
+            else:
+                inventory.pop(i)
+            return True
+    return False
+
+def inventory_slot_name(inventory, slot):
+    if 0 <= slot < len(inventory):
+        return inventory[slot]['name']
+    return None
+
 # --- Helpers for resilient music API (work with controllers that expose play or play_track, next, next_track, etc.) ---
 def _call(controller, *names, default=None):
     for n in names:
@@ -148,9 +183,40 @@ def load_game(controller, save_file=SAVE_FILE):
     except FileNotFoundError:
         print("No save file.")
         return None, None, None, None
-    except Exception as e:
-        print("Load error:", e)
-        return None, None, None, None
+
+
+# --- Items / usage ---
+def use_item(player_stats, inventory, item_name, items_db=None):
+    """Apply an item effect from items_db (or global ITEMS) to player and remove one from inventory.
+    Returns True if item was used, False otherwise."""
+    items_db = items_db or ITEMS
+    # inventory is stacked: list of {'name', 'count'}
+    entry = None
+    for it in inventory:
+        if it['name'] == item_name:
+            entry = it
+            break
+    if not entry:
+        print("You don't have that item.")
+        return False
+    info = items_db.get(item_name)
+    if not info:
+        print(f"Unknown item: {item_name}")
+        return False
+    # Heal effect (respect max HP)
+    if 'heal' in info:
+        heal_amount = info['heal']
+        prev = player_stats.get('HP', 0)
+        max_hp = player_stats.get('max_hp', prev)
+        new_hp = min(prev + heal_amount, max_hp)
+        actual_heal = new_hp - prev
+        player_stats['HP'] = new_hp
+        print(f"Used {item_name}. Healed {actual_heal} HP (HP: {prev} -> {player_stats['HP']})")
+    else:
+        print(f"Used {item_name}.")
+    # remove one instance from inventory (stacked)
+    remove_item(inventory, item_name, qty=1)
+    return True
 
 # --- UI / menus ---
 def mp3_player_menu(controller):
@@ -195,22 +261,48 @@ def start_menu():
 
 # --- Battle / rendering frames ---
 def render_battle(player_stats, enemies, frame_index, player_sprite):
+    # legacy: not used for 2D battle rendering
     os.system("cls")
-    print("=== BATTLE ===")
-    # show player frame
-    player_frame = player_sprite.get('frames', [player_sprite.get('walk')])[frame_index % max(1, len(player_sprite.get('frames', [player_sprite.get('walk')])))]
-    print(f"Player @ ({player_stats['x']},{player_stats['y']}): {player_frame}  HP:{player_stats['HP']}")
-    print()
+    print("=== BATTLE (info) ===")
+    print(f"HP: {player_stats.get('HP')}  Exp: {player_stats.get('exp',0)}")
     print("Enemies:")
     for e in enemies:
-        # enemy uses walk sprite placeholder if not provided
-        e_sprite = e.get('sprite', e.get('walk', player_sprite.get('walk', '◈')))
-        # if sprite has frames list, show a frame, else show single char
-        if isinstance(e_sprite, list):
-            s = e_sprite[frame_index % len(e_sprite)]
+        print(f" - {e['name']} HP:{e.get('HP')} pos:({e.get('b_x')},{e.get('b_y')})")
+
+def render_battle_grid(player_stats, player_bpos, enemies, frame_index, player_sprite, b_w=BATTLE_W, b_h=BATTLE_H):
+    """Render a blank battle grid with player and enemies placed by their battle coords."""
+    os.system("cls")
+    grid = [[" " for _ in range(b_w)] for _ in range(b_h)]
+    # place enemies first so player can potentially overwrite
+    for e in enemies:
+        ex = int(e.get('b_x', 0))
+        ey = int(e.get('b_y', 0))
+        size_x = max(1, int(e.get('size_x', 1)))
+        size_y = max(1, int(e.get('size_y', 1)))
+        ch = e.get('sprite', e.get('walk', ['E']))
+        if isinstance(ch, list):
+            ch = ch[frame_index % len(ch)]
         else:
-            s = e_sprite
-        print(f" - {e['name']} ({e['x']},{e['y']}): {s} HP:{e['HP']}")
+            ch = ch
+        for oy in range(size_y):
+            for ox in range(size_x):
+                tx = ex + ox
+                ty = ey + oy
+                if 0 <= ty < b_h and 0 <= tx < b_w:
+                    grid[ty][tx] = ch
+
+    # place player
+    px = int(player_bpos['x'])
+    py = int(player_bpos['y'])
+    player_frame = player_sprite.get('frames', [player_sprite.get('walk')])[frame_index % max(1, len(player_sprite.get('frames', [player_sprite.get('walk')]))) ]
+    if 0 <= py < b_h and 0 <= px < b_w:
+        grid[py][px] = player_frame
+
+    # print grid
+    print("=== BATTLE ===")
+    for row in grid:
+        print("".join(row))
+    print(f"HP: {player_stats.get('HP')}  PlayerPos:({px},{py})")
 
 # --- Modes ---
 def field_mode(player_stats, inventory, tiles, controller, map_data):
@@ -223,10 +315,11 @@ def field_mode(player_stats, inventory, tiles, controller, map_data):
     last_x, last_y = player_stats['x'], player_stats['y']
     render_map(map_data, last_x, last_y)  # Initial render
     
+    RENDER_DELAY = 0.06  # seconds between each map render/loop
     while True:
         action = read_action()
         if action is None:
-            time.sleep(0.03)
+            time.sleep(RENDER_DELAY)
             continue
         if action == 'pause':
             print("Paused. press p to resume.")
@@ -247,10 +340,24 @@ def field_mode(player_stats, inventory, tiles, controller, map_data):
                 player_stats['steps'] = steps
                 # Only render if position changed
                 render_map(map_data, player_stats['x'], player_stats['y'])
+                time.sleep(RENDER_DELAY)
                 if random.random() < 0.05:
                     if 'battle' in controller.tracks:
                         music_play(controller, 'battle')
                     return player_stats, inventory, tiles, "battle"
+        elif isinstance(action, str) and action.startswith('use_item_'):
+            # quick-use slots: use item 1/2/3
+            try:
+                slot = int(action.rsplit('_', 1)[-1]) - 1
+                if 0 <= slot < len(inventory):
+                    item_name = inventory_slot_name(inventory, slot)
+                    used = use_item(player_stats, inventory, item_name, ITEMS)
+                    if used:
+                        render_map(map_data, player_stats['x'], player_stats['y'])
+                else:
+                    print("No item in that slot.")
+            except Exception:
+                pass
         elif action == 'interact':
             tid = get_tile_id(player_stats['x'], player_stats['y'], tiles)
             print("Interacted with:", tid)
@@ -282,7 +389,33 @@ def in_game_menu(player_stats, inventory, controller):
             if ch == "Resume":
                 return
             if ch == "Items":
-                print("Inventory:", inventory or "empty"); input("Enter to continue")
+                # Interactive inventory: arrows to choose, Enter to use, Esc to exit
+                if not inventory:
+                    print("Inventory: empty"); input("Enter to continue")
+                else:
+                    idx = 0
+                    while True:
+                        os.system("cls")
+                        print("=== Items ===")
+                        for i, it in enumerate(inventory):
+                            print(f"{'> ' if i==idx else '  '}{it}")
+                        print("Enter=use, Esc=exit, arrows to move")
+                        k = msvcrt.getch()
+                        if k == b'\xe0':
+                            k2 = msvcrt.getch()
+                            if k2 == b'H': idx = (idx-1) % len(inventory)
+                            elif k2 == b'P': idx = (idx+1) % len(inventory)
+                        elif k == b'\r':
+                            item_name = inventory[idx]
+                            used = use_item(player_stats, inventory, item_name, ITEMS)
+                            input("Enter to continue")
+                            if used:
+                                # if inventory emptied, exit
+                                if not inventory:
+                                    break
+                                idx = min(idx, len(inventory)-1)
+                        elif k == b'\x1b':
+                            break
             if ch == "Save":
                 save_game(player_stats, inventory, "field", [], controller); input("Enter")
             if ch == "Load":
@@ -297,19 +430,26 @@ def in_game_menu(player_stats, inventory, controller):
 
 def battle_mode(player_stats, inventory, controller):
     # spawn a simple enemy; add walk sprite placeholder
+    # Initialize battle positions separate from field coords
+    # player battle position starts near bottom-center
+    b_w, b_h = BATTLE_W, BATTLE_H
+    player_bpos = {'x': b_w // 2, 'y': b_h - 2}
     enemies = [{
         'name': 'Shadow',
         'HP': 30,
         'attack': 8,
         'defence': 3,
         'speed': 1,
-        'x': player_stats['x'] + 2,
-        'y': player_stats['y'],
+        'b_x': min(b_w-2, player_bpos['x'] + 2),
+        'b_y': player_bpos['y'],
+        'size_x': 1,
+        'size_y': 1,
         'walk': ['◈','◇'],   # placeholder frames
         'sprite': ['◈','◇'],
         'state': 'idle', 
         'exp': 20,
-        'drop': 'potion'
+        'drop': 'potion',
+        'drop_chance': 50
     }]
     # player sprites - simple frames for walk
     player_sprite = {'walk': ['⇩','↧'], 'frames':['⇩','↧']}
@@ -317,28 +457,41 @@ def battle_mode(player_stats, inventory, controller):
     if 'battle' in controller.tracks:
         music_play(controller, 'battle')
 
+
     frame = 0
     last_update = time.time()
+    last_move_time = 0.0
+    last_attack_time = 0.0
+    MOVE_DELAY = 0.10  # seconds between moves
+    ATTACK_DELAY = 0.35  # seconds between attacks
+    RENDER_DELAY = 0.06  # seconds between each battle render/loop
+
     while True:
-        # update animation frame every 0.3s
         now = time.time()
+        # update animation frame every 0.3s
         if now - last_update > 0.3:
             frame += 1
             last_update = now
 
-        render_battle(player_stats, enemies, frame, player_sprite)
+        # render 2D battle grid
+        render_battle_grid(player_stats, player_bpos, enemies, frame, player_sprite, b_w=b_w, b_h=b_h)
 
         action = read_action()
         if action is None:
             # simulate enemies moving toward player slowly
-            for e in enemies:
-                if e['x'] > player_stats['x']: e['x'] -= e['speed']
-                elif e['x'] < player_stats['x']: e['x'] += e['speed']
-                if e['y'] > player_stats['y']: e['y'] -= e['speed']
-                elif e['y'] < player_stats['y']: e['y'] += e['speed']
+            if last_move_time == 0.0 or now - last_move_time > MOVE_DELAY:
+                for e in enemies:
+                    old_x, old_y = e.get('b_x'), e.get('b_y')
+                    if e.get('b_x') > player_bpos['x']: e['b_x'] -= e['speed']
+                    elif e.get('b_x') < player_bpos['x']: e['b_x'] += e['speed']
+                    if e.get('b_y') > player_bpos['y']: e['b_y'] -= e['speed']
+                    elif e.get('b_y') < player_bpos['y']: e['b_y'] += e['speed']
+                    if e.get('b_x') == player_bpos['x'] and e.get('b_y') == player_bpos['y']:
+                        e['b_x'], e['b_y'] = old_x, old_y
+                last_move_time = now
             # check enemy attacks
             for e in enemies:
-                dist = abs(e['x']-player_stats['x']) + abs(e['y']-player_stats['y'])
+                dist = abs(e.get('b_x')-player_bpos['x']) + abs(e.get('b_y')-player_bpos['y'])
                 if dist <= 1 and random.random() < 0.15:
                     dmg = max(0, e['attack'] - player_stats.get('defence',0))
                     player_stats['HP'] -= dmg
@@ -346,6 +499,18 @@ def battle_mode(player_stats, inventory, controller):
             # check end conditions
             if all(e['HP'] <= 0 for e in enemies):
                 print("You won the battle!")
+                for e in enemies:
+                    exp_gain = e.get('exp', 0)
+                    if exp_gain:
+                        player_stats['exp'] = player_stats.get('exp', 0) + exp_gain
+                        print(f"Earned {exp_gain} exp from {e['name']}.")
+                    drop = e.get('drop')
+                    if drop:
+                        dc = e.get('drop_chance', 50)
+                        prob = (dc / 100.0) if dc > 1 else float(dc)
+                        if random.random() < prob:
+                            add_item(inventory, drop, qty=1)
+                            print(f"{e['name']} dropped {drop}!")
                 if 'town' in controller.tracks:
                     music_play(controller, 'town')
                 return player_stats, inventory, "field"
@@ -353,7 +518,7 @@ def battle_mode(player_stats, inventory, controller):
                 print("You died...")
                 music_stop(controller)
                 return player_stats, inventory, "end game"
-            time.sleep(0.08)
+            time.sleep(RENDER_DELAY)
             continue
 
         if action == 'pause':
@@ -364,17 +529,50 @@ def battle_mode(player_stats, inventory, controller):
                 time.sleep(0.02)
             continue
         if action in ('up','down','left','right'):
-            dx = {'left':-1,'right':1,'up':0,'down':0}[action]
-            dy = {'up':-1,'down':1,'left':0,'right':0}[action]
-            player_stats['x'] += dx; player_stats['y'] += dy
+            # movement delay: only allow move if enough time has passed since last move
+            if last_move_time == 0.0 or now - last_move_time > MOVE_DELAY:
+                dx = {'left':-1,'right':1,'up':0,'down':0}[action]
+                dy = {'up':-1,'down':1,'left':0,'right':0}[action]
+                old_px, old_py = player_bpos['x'], player_bpos['y']
+                player_bpos['x'] = max(0, min(b_w-1, player_bpos['x'] + dx))
+                player_bpos['y'] = max(0, min(b_h-1, player_bpos['y'] + dy))
+                # collision: if moved into enemy, revert
+                collided = False
+                for e in enemies:
+                    if int(e.get('b_x')) == int(player_bpos['x']) and int(e.get('b_y')) == int(player_bpos['y']):
+                        collided = True
+                        break
+                if collided:
+                    player_bpos['x'], player_bpos['y'] = old_px, old_py
+                last_move_time = now
+            time.sleep(RENDER_DELAY)
         elif action == 'attack':
-            # attack nearest alive enemy
-            alive = [e for e in enemies if e['HP'] > 0]
-            if alive:
-                target = min(alive, key=lambda e: abs(e['x']-player_stats['x'])+abs(e['y']-player_stats['y']))
-                dmg = max(0, player_stats.get('attack',10) - target.get('defence',0))
-                target['HP'] -= dmg
-                print(f"You hit {target['name']} for {dmg}!"); time.sleep(0.5)
+            # attack delay
+            if now - last_attack_time > ATTACK_DELAY:
+                # attack nearest alive enemy within range
+                alive = [e for e in enemies if e['HP'] > 0]
+                if alive:
+                    # choose nearest by battle coordinates
+                    target = min(alive, key=lambda e: abs(e.get('b_x',0)-player_bpos['x']) + abs(e.get('b_y',0)-player_bpos['y']))
+                    dist = abs(target.get('b_x',0)-player_bpos['x']) + abs(target.get('b_y',0)-player_bpos['y'])
+                    if dist <= 1:
+                        dmg = max(0, player_stats.get('attack',10) - target.get('defence',0))
+                        target['HP'] -= dmg
+                        print(f"You hit {target['name']} for {dmg}!"); time.sleep(0.5)
+                    else:
+                        print("Enemy is too far to attack!"); time.sleep(0.4)
+                last_attack_time = now
+        elif isinstance(action, str) and action.startswith('use_item_'):
+            # quick-use in battle
+            try:
+                slot = int(action.rsplit('_', 1)[-1]) - 1
+                if 0 <= slot < len(inventory):
+                    item_name = inventory_slot_name(inventory, slot)
+                    use_item(player_stats, inventory, item_name, ITEMS)
+                else:
+                    print("No item in that slot.")
+            except Exception:
+                pass
         elif action == 'open_menu':
             in_game_menu(player_stats, inventory, controller)
         elif action == 'next_track':
@@ -386,16 +584,8 @@ def battle_mode(player_stats, inventory, controller):
 def main():
     # Use map from maps.py
     map_data = map1
-    items = {
-        'potion': {'heal': 100},
-        'hi-potion': {'heal': 500},
-        'x-potion': {'heal': 9999},
-        'ether': {'mana': 50},
-        'hi-ether': {'mana': 200},
-        'elixir': {'heal': 9999, 'mana': 9999}
-    }
     # initial player (started in middle-ish area)
-    player_stats = {'x': 40, 'y': 30, 'HP': 120, 'attack': 12, 'defence': 5, 'Level':1, 'steps':0, 'exp':0, 'munny':0, 'items':[]}
+    player_stats = {'x': 40, 'y': 30, 'HP': 120, 'max_hp': 120, 'attack': 12, 'defence': 5, 'Level':1, 'steps':0, 'exp':0, 'munny':0, 'items':[]}
     tiles = []
     # place tiles from map chars
     for y, row in enumerate(map_data):
@@ -435,6 +625,10 @@ def main():
     if choice == 1:
         p, inv, gm, tl = load_game(controller)
         if p:
+            # Ensure loaded player has max_hp and cap HP to max
+            p.setdefault('max_hp', p.get('HP', 120))
+            if p.get('HP', 0) > p['max_hp']:
+                p['HP'] = p['max_hp']
             player_stats.update(p)
     elif choice == 2:
         mp3_player_menu(controller)
