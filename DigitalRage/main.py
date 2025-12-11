@@ -23,84 +23,91 @@ ITEMS = {
 }
 
 # Battle grid defaults
-BATTLE_W = 100
-BATTLE_H = 50
+BATTLE_WIDTH = 100
+BATTLE_HEIGHT = 50
 
 # --- Inventory helpers (stacked items) ---
+# Handle stacking multiple items of same type to keep inventory compact
 def add_item(inventory, name, qty=1):
-    for it in inventory:
-        if it['name'] == name:
-            it['count'] += qty
+    # Search for existing item; if found, add to its count; otherwise create new stack
+    for item in inventory:
+        if item['name'] == name:
+            item['count'] += qty
             return
     inventory.append({'name': name, 'count': qty})
 
 def remove_item(inventory, name, qty=1):
-    for i, it in enumerate(inventory):
-        if it['name'] == name:
-            if it['count'] > qty:
-                it['count'] -= qty
+    # Find item by name and reduce count by qty; if count drops to 0, remove entry from inventory
+    for i, item in enumerate(inventory):
+        if item['name'] == name:
+            if item['count'] > qty:
+                item['count'] -= qty
             else:
                 inventory.pop(i)
             return True
     return False
 
 def inventory_slot_name(inventory, slot):
+    # Return the item name at given slot index; bounds check to prevent index errors
     if 0 <= slot < len(inventory):
         return inventory[slot]['name']
     return None
 
 
-def normalize_inventory(inv):
-    """Convert legacy inventory formats into stacked dicts: [{'name':..., 'count':n}, ...]."""
-    if not inv:
+def normalize_inventory(inventory_data):
+    # Convert any legacy inventory format (strings, tuples, mixed) into standardized stacked format
+    # Ensures consistent inventory structure: [{'name': str, 'count': int}, ...]
+    if not inventory_data:
         return []
     # If already in expected format, verify and return
     good = True
-    if isinstance(inv, list):
-        for it in inv:
-            if not (isinstance(it, dict) and 'name' in it):
+    if isinstance(inventory_data, list):
+        for item in inventory_data:
+            if not (isinstance(item, dict) and 'name' in item):
                 good = False
                 break
     else:
         return []
     if good:
-        # ensure counts are ints and >=1
-        out = []
-        for it in inv:
-            name = it.get('name')
-            cnt = int(it.get('count', 1)) if it.get('count') is not None else 1
-            if cnt > 0:
-                out.append({'name': name, 'count': cnt})
-        return out
+        # Validate and normalize counts
+        normalized_output = []
+        for item in inventory_data:
+            name = item.get('name')
+            count = int(item.get('count', 1)) if item.get('count') is not None else 1
+            if count > 0:
+                normalized_output.append({'name': name, 'count': count})
+        return normalized_output
 
-    # Otherwise, convert legacy list (strings, tuples, or dicts) into stacked dicts
-    counts = {}
-    for it in inv:
-        if isinstance(it, str):
-            counts[it] = counts.get(it, 0) + 1
-        elif isinstance(it, dict):
-            # common legacy forms: {'name': 'potion', 'count': 2} or {'potion': 2}
-            if 'name' in it:
-                nm = it.get('name')
-                cnt = int(it.get('count', 1))
-                counts[nm] = counts.get(nm, 0) + cnt
+    # Otherwise, convert legacy formats by aggregating items by name
+    item_counts = {}
+    for item in inventory_data:
+        if isinstance(item, str):
+            item_counts[item] = item_counts.get(item, 0) + 1
+        elif isinstance(item, dict):
+            # Handle various dict formats: {'name': 'potion', 'count': 2} or {'potion': 2}
+            if 'name' in item:
+                item_name = item.get('name')
+                item_count = int(item.get('count', 1))
+                item_counts[item_name] = item_counts.get(item_name, 0) + item_count
             else:
-                # try key->value pairs
-                for k, v in it.items():
-                    if isinstance(k, str) and isinstance(v, int):
-                        counts[k] = counts.get(k, 0) + v
-        elif isinstance(it, (list, tuple)) and len(it) == 2 and isinstance(it[0], str):
-            counts[it[0]] = counts.get(it[0], 0) + int(it[1])
-    out = []
-    for k, v in counts.items():
-        out.append({'name': k, 'count': v})
-    return out
+                # Try direct key-value pairs
+                for key, value in item.items():
+                    if isinstance(key, str) and isinstance(value, int):
+                        item_counts[key] = item_counts.get(key, 0) + value
+        elif isinstance(item, (list, tuple)) and len(item) == 2 and isinstance(item[0], str):
+            item_counts[item[0]] = item_counts.get(item[0], 0) + int(item[1])
+    # Build standardized output from aggregated counts
+    normalized_output = []
+    for name, count in item_counts.items():
+        normalized_output.append({'name': name, 'count': count})
+    return normalized_output
 
 # --- Helpers for resilient music API (work with controllers that expose play or play_track, next, next_track, etc.) ---
 def _call(controller, *names, default=None):
-    for n in names:
-        if hasattr(controller, n):
-            return getattr(controller, n)
+    # Resilient method lookup: try each method name on controller until one exists
+    for method_name in names:
+        if hasattr(controller, method_name):
+            return getattr(controller, method_name)
     return default
 
 def music_play(controller, name):
@@ -140,33 +147,44 @@ def music_list(controller):
 
 # --- Input (msvcrt) ---
 def read_action():
+    # Poll keyboard input; map key presses (WASD, arrows, space, etc.) to game action strings
     if not msvcrt.kbhit():
         return None
     key = msvcrt.getch()
-    if key == b'\xe0':  # special / arrow
-        key2 = msvcrt.getch()
-        return {b'H': 'up', b'P': 'down', b'K': 'left', b'M': 'right'}.get(key2)
-    mapping = {
-        b'w': 'up', b's': 'down', b'a': 'left', b'd': 'right',
-        b'p': 'pause', b'i': 'interact', b'=': 'next_track', b'-': 'prev_track',
+    # Define mapping before checks
+    key_to_action_mapping = {
         b' ': 'attack', b'j': 'dodge_left', b'l': 'dodge_right', b'k': 'dodge_down', b'u': 'dodge_up',
-        b'1': 'use_item_1', b'2': 'use_item_2', b'3': 'use_item_3', b'm': 'open_menu'
+        b'1': 'use_item_1', b'2': 'use_item_2', b'3': 'use_item_3', b'm': 'open_menu',
+        b'w': 'up', b'W': 'up',
+        b's': 'down', b'S': 'down',
+        b'a': 'left', b'A': 'left',
+        b'd': 'right', b'D': 'right',
+        b'i': 'interact', b'I': 'interact',
+        b'p': 'pause', b'P': 'pause',
+        b'=': 'next_track', b'+': 'next_track',
+        b'-': 'prev_track', b'_': 'prev_track'
     }
-    return mapping.get(key, None)
+    # Handle arrow keys: Windows special keys start with \xe0
+    if key == b'\xe0':
+        arrow_key = msvcrt.getch()
+        return {b'H': 'up', b'P': 'down', b'K': 'left', b'M': 'right'}.get(arrow_key)
+    return key_to_action_mapping.get(key, None)
 
 # --- FS helpers ---
-def locate_music_file(name, base_dir):
-    p = os.path.join(base_dir, name)
-    if os.path.exists(p):
-        return os.path.abspath(p)
-    target = name.lower()
-    for f in os.listdir(base_dir):
-        if f.lower() == target:
-            return os.path.join(base_dir, f)
-    base_no_ext = os.path.splitext(name)[0].lower()
-    for f in os.listdir(base_dir):
-        if os.path.splitext(f)[0].lower() == base_no_ext:
-            return os.path.join(base_dir, f)
+def locate_music_file(filename, base_directory):
+    # Search for music file: try exact path first, then case-insensitive, then match by base name
+    exact_path = os.path.join(base_directory, filename)
+    if os.path.exists(exact_path):
+        return os.path.abspath(exact_path)
+    filename_lower = filename.lower()
+    for directory_file in os.listdir(base_directory):
+        if directory_file.lower() == filename_lower:
+            return os.path.join(base_directory, directory_file)
+    # Try matching without extension
+    filename_base_no_ext = os.path.splitext(filename)[0].lower()
+    for directory_file in os.listdir(base_directory):
+        if os.path.splitext(directory_file)[0].lower() == filename_base_no_ext:
+            return os.path.join(base_directory, directory_file)
     return None
 
 # --- Map / Tiles ---
@@ -174,36 +192,39 @@ def setup_tile(tiles, tile_id, x, y):
     tiles.append({'id': tile_id, 'x': x, 'y': y})
     return tiles
 
-def get_tile_id(x, y, tiles):
-    for t in tiles:
-        if t['x'] == x and t['y'] == y:
-            return t['id']
+def get_tile_id(x_pos, y_pos, tiles):
+    # Find tile at given map coordinates; return 'id' field if found, else 'empty' for passable tiles
+    for tile in tiles:
+        if tile['x'] == x_pos and tile['y'] == y_pos:
+            return tile['id']
     return "empty"
 
-def check_collision(x, y, tiles):
-    return get_tile_id(x, y, tiles) not in ("wall", "blocked")
+def check_collision(x_pos, y_pos, tiles):
+    # Pseudocode: Return True if tile at position is passable (not wall/blocked)
+    return get_tile_id(x_pos, y_pos, tiles) not in ("wall", "blocked")
 
 def render_map(map_data, player_x, player_y, player_stats=None):
-    #Render the map with player position overlaid.
+    # Pseudocode: Clear screen, draw map grid with player marker overlaid, display UI info
     os.system("cls")
     if not map_data or len(map_data) == 0:
         print("[No map data]")
         return
     
-    for row_idx, row in enumerate(map_data):
+    for row_index, map_row in enumerate(map_data):
         line = ""
-        for col_idx, char in enumerate(row):
-            if row_idx == player_y and col_idx == player_x:
+        for column_index, tile_character in enumerate(map_row):
+            if row_index == player_y and column_index == player_x:
                 line += "⇩"  # Player marker
             else:
-                line += char
+                line += tile_character
         print(line)
     print(f"\n[Identifiers: @ = boss | C = chest | N = NPC | D = door | # = wall]")
+    # Display player stats and progress if provided
     if player_stats:
-        level = player_stats.get('Level', 1)
-        exp = player_stats.get('exp', 0)
-        next_exp = exp_needed_for_level(level + 1)
-        print(f"[Level {level} | HP {player_stats.get('HP')}/{player_stats.get('max_hp')} | EXP {exp}/{next_exp}]")
+        current_level = player_stats.get('Level', 1)
+        current_exp = player_stats.get('exp', 0)
+        next_level_exp_requirement = exp_needed_for_level(current_level + 1)
+        print(f"[Level {current_level} | HP {player_stats.get('HP')}/{player_stats.get('max_hp')} | EXP {current_exp}/{next_level_exp_requirement}]")
     print(f"[Controls: WASD/arrows=move, i=interact, p=pause, m=menu, 1-3=use item]")
 
 # --- Save/Load ---
@@ -242,16 +263,17 @@ def load_game(controller, save_file=SAVE_FILE):
 
 # --- Leveling system ---
 def exp_needed_for_level(level):
-    """Calculate exp needed to reach a given level. Each level requires 1.2x more."""
+    # Pseudocode: Calculate exponential experience requirement: 100 * 1.2^(level-1)
     if level <= 1:
         return 0
     return int(100 * (1.2 ** (level - 1)))
 
 def check_level_up(player_stats):
-    """Check if player should level up based on exp. Returns True if leveled up."""
+    # Pseudocode: Check if current exp >= next level threshold. If so: increment level, recalculate attack/defence stats, show message
     current_level = player_stats.get('Level', 1)
     current_exp = player_stats.get('exp', 0)
     next_exp_needed = exp_needed_for_level(current_level + 1)
+    # Check if player has enough exp to level
     if current_exp >= next_exp_needed:
         player_stats['Level'] += 1
         # Update stats on level up
@@ -269,45 +291,45 @@ def check_level_up(player_stats):
 
 # --- Items / usage ---
 def use_item(player_stats, inventory, item_name, items_db=None):
-    """Apply an item effect from items_db (or global ITEMS) to player and remove one from inventory.
-    Returns True if item was used, False otherwise."""
+    # Pseudocode: Find item in inventory, apply effect (heal/level), remove if consumable, return success status
     items_db = items_db or ITEMS
-    # inventory is stacked: list of {'name', 'count'}
+    # Inventory format: list of {'name': str, 'count': int}
     entry = None
-    for it in inventory:
-        if it['name'] == item_name:
-            entry = it
+    for item in inventory:
+        if item['name'] == item_name:
+            entry = item
             break
     if not entry:
         print("You don't have that item.")
         return False
-    info = items_db.get(item_name)
-    if not info:
+    item_info = items_db.get(item_name)
+    if not item_info:
         print(f"Unknown item: {item_name}")
         return False
 
-    # Heal effect (respect max HP)
-    if 'heal' in info:
-        heal_amount = info['heal']
-        prev = player_stats.get('HP', 0)
-        max_hp = player_stats.get('max_hp', prev)
-        new_hp = min(prev + heal_amount, max_hp)
-        actual_heal = new_hp - prev
+    # Apply healing effect (capped at max HP)
+    if 'heal' in item_info:
+        heal_amount = item_info['heal']
+        previous_hp = player_stats.get('HP', 0)
+        max_hp = player_stats.get('max_hp', previous_hp)
+        new_hp = min(previous_hp + heal_amount, max_hp)
+        actual_healing_done = new_hp - previous_hp
         player_stats['HP'] = new_hp
-        print(f"Used {item_name}. Healed {actual_heal} HP (HP: {prev} -> {player_stats['HP']})")
+        print(f"Used {item_name}. Healed {actual_healing_done} HP (HP: {previous_hp} -> {player_stats['HP']})")
 
     # Level set / ancient power
-    elif 'level' in info:
-        prev_level = player_stats.get('Level', 1)
-        player_stats['Level'] = info['level']
-        print(f"Used {item_name}. Level: {prev_level} -> {player_stats['Level']}")
+    # Apply level-setting effect (e.g., Ancient Cypher)
+    elif 'level' in item_info:
+        previous_level = player_stats.get('Level', 1)
+        player_stats['Level'] = item_info['level']
+        print(f"Used {item_name}. Level: {previous_level} -> {player_stats['Level']}")
 
     else:
         print(f"Used {item_name}.")
 
-    # remove one instance from inventory only if item is consumable
-    consumable = info.get('consumable', True)
-    if consumable:
+    # Remove from inventory if consumable (non-consumable items persist)
+    is_consumable = item_info.get('consumable', True)
+    if is_consumable:
         remove_item(inventory, item_name, qty=1)
     return True
 
@@ -335,7 +357,8 @@ def mp3_player_menu(controller):
             break
 
 def tutorial_mode():
-    """Interactive tutorial showing controls, map identifiers, menus, and test battle."""
+    # Interactive tutorial showing controls, map identifiers, menus, and test battle.
+    # Pseudocode: Walk player through controls, menu items, and run a minimal test battle
     os.system("cls")
     print("=== TUTORIAL ===")
     print("\n1. MAP IDENTIFIERS:")
@@ -410,7 +433,7 @@ def tutorial_mode():
     test_inventory = []
     test_enemies = [{
         'name': 'Training Dummy', 'HP': 20, 'attack': 0, 'defence': 0, 'speed': 0,
-        'b_x': 30, 'b_y': 25, 'size_x': 1, 'size_y': 1,
+        'battle_x': 30, 'battle_y': 25, 'size_width': 1, 'size_height': 1,
         'sprite': ['◻'], 'exp': 0, 'drop': None, 'drop_chance': 0
     }]
     test_sprite = {'walk': ['⇩','↧'], 'frames':['⇩','↧']}
@@ -422,15 +445,15 @@ def tutorial_mode():
     MOVE_DELAY = 0.10
     ATTACK_DELAY = 0.35
     RENDER_DELAY = 0.06
-    b_w, b_h = BATTLE_W, BATTLE_H
-    player_bpos = {'x': b_w // 2, 'y': b_h - 2}
+    battle_width, battle_height = BATTLE_WIDTH, BATTLE_HEIGHT
+    player_bpos = {'x': battle_width // 2, 'y': battle_height - 2}
     
     while True:
         now = time.time()
         if now - last_update > 0.3:
             frame += 1
             last_update = now
-        render_battle_grid(test_player, player_bpos, test_enemies, frame, test_sprite, b_w=b_w, b_h=b_h)
+        render_battle_grid(test_player, player_bpos, test_enemies, frame, test_sprite, battle_width=battle_width, battle_height=battle_height)
         print("(Defeat the dummy, then press P to exit)")
         action = read_action()
         
@@ -446,11 +469,11 @@ def tutorial_mode():
                 dx = {'left':-1,'right':1,'up':0,'down':0}[action]
                 dy = {'up':-1,'down':1,'left':0,'right':0}[action]
                 old_px, old_py = player_bpos['x'], player_bpos['y']
-                player_bpos['x'] = max(0, min(b_w-1, player_bpos['x'] + dx))
-                player_bpos['y'] = max(0, min(b_h-1, player_bpos['y'] + dy))
+                player_bpos['x'] = max(0, min(battle_width-1, player_bpos['x'] + dx))
+                player_bpos['y'] = max(0, min(battle_height-1, player_bpos['y'] + dy))
                 collided = False
                 for e in test_enemies:
-                    if int(e.get('b_x')) == int(player_bpos['x']) and int(e.get('b_y')) == int(player_bpos['y']):
+                    if int(e.get('battle_x')) == int(player_bpos['x']) and int(e.get('battle_y')) == int(player_bpos['y']):
                         collided = True; break
                 if collided:
                     player_bpos['x'], player_bpos['y'] = old_px, old_py
@@ -460,8 +483,8 @@ def tutorial_mode():
             if now - last_attack_time > ATTACK_DELAY:
                 alive = [e for e in test_enemies if e['HP'] > 0]
                 if alive:
-                    target = min(alive, key=lambda e: abs(e.get('b_x',0)-player_bpos['x']) + abs(e.get('b_y',0)-player_bpos['y']))
-                    dist = abs(target.get('b_x',0)-player_bpos['x']) + abs(target.get('b_y',0)-player_bpos['y'])
+                    target = min(alive, key=lambda e: abs(e.get('battle_x',0)-player_bpos['x']) + abs(e.get('battle_y',0)-player_bpos['y']))
+                    dist = abs(target.get('battle_x',0)-player_bpos['x']) + abs(target.get('battle_y',0)-player_bpos['y'])
                     if dist <= 1:
                         dmg = max(0, test_player.get('attack',10) - target.get('defence',0))
                         target['HP'] -= dmg
@@ -505,46 +528,47 @@ def render_battle(player_stats, enemies, frame_index, player_sprite):
     print(f"HP: {player_stats.get('HP')}  Exp: {player_stats.get('exp',0)}")
     print("Enemies:")
     for e in enemies:
-        print(f" - {e['name']} HP:{e.get('HP')} pos:({e.get('b_x')},{e.get('b_y')})")
+        print(f" - {e['name']} HP:{e.get('HP')} pos:({e.get('battle_x')},{e.get('battle_y')})")
 
-def render_battle_grid(player_stats, player_bpos, enemies, frame_index, player_sprite, b_w=BATTLE_W, b_h=BATTLE_H):
-    """Render a blank battle grid with player and enemies placed by their battle coords."""
+def render_battle_grid(player_stats, player_bpos, enemies, frame_index, player_sprite, battle_width=BATTLE_WIDTH, battle_height=BATTLE_HEIGHT):
+    # Pseudocode: Clear screen, create battle grid, place enemies and player sprites, display positions
     os.system("cls")
-    grid = [[" " for _ in range(b_w)] for _ in range(b_h)]
+    grid = [[" " for _ in range(battle_width)] for _ in range(battle_height)]
     # place enemies first so player can potentially overwrite
     for e in enemies:
-        ex = int(e.get('b_x', 0))
-        ey = int(e.get('b_y', 0))
-        size_x = max(1, int(e.get('size_x', 1)))
-        size_y = max(1, int(e.get('size_y', 1)))
+        enemy_x = int(e.get('battle_x', 0))
+        enemy_y = int(e.get('battle_y', 0))
+        size_width = max(1, int(e.get('size_width', e.get('size_x', 1))))
+        size_height = max(1, int(e.get('size_height', e.get('size_y', 1))))
         ch = e.get('sprite', e.get('walk', ['E']))
         if isinstance(ch, list):
             ch = ch[frame_index % len(ch)]
         else:
             ch = ch
-        for oy in range(size_y):
-            for ox in range(size_x):
-                tx = ex + ox
-                ty = ey + oy
-                if 0 <= ty < b_h and 0 <= tx < b_w:
-                    grid[ty][tx] = ch
+        for offset_y in range(size_height):
+            for offset_x in range(size_width):
+                target_x = enemy_x + offset_x
+                target_y = enemy_y + offset_y
+                if 0 <= target_y < battle_height and 0 <= target_x < battle_width:
+                    grid[target_y][target_x] = ch
 
     # place player
-    px = int(player_bpos['x'])
-    py = int(player_bpos['y'])
+    player_x = int(player_bpos['x'])
+    player_y = int(player_bpos['y'])
     player_frame = player_sprite.get('frames', [player_sprite.get('walk')])[frame_index % max(1, len(player_sprite.get('frames', [player_sprite.get('walk')]))) ]
-    if 0 <= py < b_h and 0 <= px < b_w:
-        grid[py][px] = player_frame
+    if 0 <= player_y < battle_height and 0 <= player_x < battle_width:
+        grid[player_y][player_x] = player_frame
 
     # print grid
     print("=== BATTLE ===")
     for row in grid:
         print("".join(row))
-    print(f"HP: {player_stats.get('HP')}  PlayerPos:({px},{py})")
+    print(f"HP: {player_stats.get('HP')}  PlayerPos:({player_x},{player_y})")
 
 # --- Modes ---
 def field_mode(player_stats, inventory, tiles, controller, map_data):
-    """Field mode: explore map, encounter battles, interact with tiles."""
+    # Field mode: explore map, encounter battles, interact with tiles.
+    # Pseudocode: Render map, handle input for movement/interact/menu, trigger battles/bosses, save steps
     # auto-music
     if 'town' in controller.tracks and getattr(controller, "current_track", None) != 'town':
         music_play(controller, 'town')
@@ -582,9 +606,9 @@ def field_mode(player_stats, inventory, tiles, controller, map_data):
                 # check for boss tile and trigger mini-boss
                 tid = get_tile_id(player_stats['x'], player_stats['y'], tiles)
                 if tid == 'boss':
-                    player_stats, inventory, gm = mini_boss_battle(player_stats, inventory, controller, boss_pos=(nx,ny), tiles=tiles)
-                    if gm == 'end game':
-                        return player_stats, inventory, tiles, gm
+                    player_stats, inventory, game_mode = mini_boss_battle(player_stats, inventory, controller, boss_pos=(nx,ny), tiles=tiles)
+                    if game_mode == 'end game':
+                        return player_stats, inventory, tiles, game_mode
                     # Check for level up after boss
                     while check_level_up(player_stats):
                         pass
@@ -621,7 +645,8 @@ def field_mode(player_stats, inventory, tiles, controller, map_data):
 
 # --- Boss and Fragment Functions ---
 def combine_fragments(inventory):
-    """Combine 9 ancient fragments into an Ancient Cypher."""
+    # Combine 9 ancient fragments into an Ancient Cypher.
+    # Pseudocode: Count fragments in inventory; if >=9 remove 9 and add Ancient Cypher
     frag_name = 'ancient_fragment'
     count = 0
     for it in inventory:
@@ -635,12 +660,12 @@ def combine_fragments(inventory):
 
 
 def mini_boss_battle(player_stats, inventory, controller, boss_pos=None, tiles=None):
-    """Mini-boss battle with Guardian, drops ancient_fragment."""
-    b_w, b_h = BATTLE_W, BATTLE_H
-    player_bpos = {'x': b_w // 2, 'y': b_h - 2}
+    # Pseudocode: Initialize mini-boss battle, manage combat loop until boss defeated or player dies
+    battle_width, battle_height = BATTLE_WIDTH, BATTLE_HEIGHT
+    player_bpos = {'x': battle_width // 2, 'y': battle_height - 2}
     boss = {
         'name': 'Guardian', 'HP': 60, 'attack': 10, 'defence': 3, 'speed': 1,
-        'b_x': min(b_w-2, player_bpos['x'] + 2), 'b_y': player_bpos['y'], 'size_x': 1, 'size_y': 1,
+        'battle_x': min(battle_width-2, player_bpos['x'] + 2), 'battle_y': player_bpos['y'], 'size_width': 1, 'size_height': 1,
         'sprite': ['G'], 'exp': 10, 'drop': 'ancient_fragment', 'drop_chance': 100
     }
     enemies = [boss]
@@ -661,21 +686,21 @@ def mini_boss_battle(player_stats, inventory, controller, boss_pos=None, tiles=N
         if now - last_update > 0.3:
             frame += 1
             last_update = now
-        render_battle_grid(player_stats, player_bpos, enemies, frame, player_sprite, b_w=b_w, b_h=b_h)
+        render_battle_grid(player_stats, player_bpos, enemies, frame, player_sprite, battle_width=battle_width, battle_height=battle_height)
         action = read_action()
         if action is None:
             if last_move_time == 0.0 or now - last_move_time > MOVE_DELAY:
                 for e in enemies:
-                    old_x, old_y = e.get('b_x'), e.get('b_y')
-                    if e.get('b_x') > player_bpos['x']: e['b_x'] -= e['speed']
-                    elif e.get('b_x') < player_bpos['x']: e['b_x'] += e['speed']
-                    if e.get('b_y') > player_bpos['y']: e['b_y'] -= e['speed']
-                    elif e.get('b_y') < player_bpos['y']: e['b_y'] += e['speed']
-                    if e.get('b_x') == player_bpos['x'] and e.get('b_y') == player_bpos['y']:
-                        e['b_x'], e['b_y'] = old_x, old_y
+                    old_x, old_y = e.get('battle_x'), e.get('battle_y')
+                    if e.get('battle_x') > player_bpos['x']: e['battle_x'] -= e['speed']
+                    elif e.get('battle_x') < player_bpos['x']: e['battle_x'] += e['speed']
+                    if e.get('battle_y') > player_bpos['y']: e['battle_y'] -= e['speed']
+                    elif e.get('battle_y') < player_bpos['y']: e['battle_y'] += e['speed']
+                    if e.get('battle_x') == player_bpos['x'] and e.get('battle_y') == player_bpos['y']:
+                        e['battle_x'], e['battle_y'] = old_x, old_y
                 last_move_time = now
             for e in enemies:
-                dist = abs(e.get('b_x')-player_bpos['x']) + abs(e.get('b_y')-player_bpos['y'])
+                dist = abs(e.get('battle_x')-player_bpos['x']) + abs(e.get('battle_y')-player_bpos['y'])
                 if dist <= 1 and random.random() < 0.15:
                     dmg = max(0, e['attack'] - player_stats.get('defence',0))
                     player_stats['HP'] -= dmg
@@ -725,11 +750,11 @@ def mini_boss_battle(player_stats, inventory, controller, boss_pos=None, tiles=N
                 dx = {'left':-1,'right':1,'up':0,'down':0}[action]
                 dy = {'up':-1,'down':1,'left':0,'right':0}[action]
                 old_px, old_py = player_bpos['x'], player_bpos['y']
-                player_bpos['x'] = max(0, min(b_w-1, player_bpos['x'] + dx))
-                player_bpos['y'] = max(0, min(b_h-1, player_bpos['y'] + dy))
+                player_bpos['x'] = max(0, min(battle_width-1, player_bpos['x'] + dx))
+                player_bpos['y'] = max(0, min(battle_height-1, player_bpos['y'] + dy))
                 collided = False
                 for e in enemies:
-                    if int(e.get('b_x')) == int(player_bpos['x']) and int(e.get('b_y')) == int(player_bpos['y']):
+                    if int(e.get('battle_x')) == int(player_bpos['x']) and int(e.get('battle_y')) == int(player_bpos['y']):
                         collided = True; break
                 if collided:
                     player_bpos['x'], player_bpos['y'] = old_px, old_py
@@ -739,8 +764,8 @@ def mini_boss_battle(player_stats, inventory, controller, boss_pos=None, tiles=N
             if now - last_attack_time > ATTACK_DELAY:
                 alive = [e for e in enemies if e['HP'] > 0]
                 if alive:
-                    target = min(alive, key=lambda e: abs(e.get('b_x',0)-player_bpos['x']) + abs(e.get('b_y',0)-player_bpos['y']))
-                    dist = abs(target.get('b_x',0)-player_bpos['x']) + abs(target.get('b_y',0)-player_bpos['y'])
+                    target = min(alive, key=lambda e: abs(e.get('battle_x',0)-player_bpos['x']) + abs(e.get('battle_y',0)-player_bpos['y']))
+                    dist = abs(target.get('battle_x',0)-player_bpos['x']) + abs(target.get('battle_y',0)-player_bpos['y'])
                     if dist <= 1:
                         dmg = max(0, player_stats.get('attack',10) - target.get('defence',0))
                         target['HP'] -= dmg
@@ -761,9 +786,9 @@ def mini_boss_battle(player_stats, inventory, controller, boss_pos=None, tiles=N
 
 
 def fight_king_battle(player_stats, inventory, controller):
-    """Final boss battle with King, two phases with music transition. Scales with player level."""
-    b_w, b_h = BATTLE_W, BATTLE_H
-    player_bpos = {'x': b_w // 2, 'y': b_h - 2}
+    # Pseudocode: Initialize King boss fight with level-scaling stats, handle phase transition at 25% HP, manage music switching
+    battle_width, battle_height = BATTLE_WIDTH, BATTLE_HEIGHT
+    player_bpos = {'x': battle_width // 2, 'y': battle_height - 2}
     
     # Scale King stats based on player level
     player_level = player_stats.get('Level', 1)
@@ -773,7 +798,7 @@ def fight_king_battle(player_stats, inventory, controller):
     
     boss = {
         'name': 'King', 'HP': boss_max, 'max_HP': boss_max, 'attack': king_attack, 'defence': king_defence, 'speed': 1,
-        'b_x': min(b_w-3, player_bpos['x'] + 4), 'b_y': player_bpos['y'], 'size_x': 2, 'size_y': 2,
+        'battle_x': min(battle_width-3, player_bpos['x'] + 4), 'battle_y': player_bpos['y'], 'size_width': 2, 'size_height': 2,
         'sprite': ['K','k'], 'exp': 500, 'drop': None, 'phase': 1
     }
     enemies = [boss]
@@ -795,7 +820,7 @@ def fight_king_battle(player_stats, inventory, controller):
         if now - last_update > 0.3:
             frame += 1
             last_update = now
-        render_battle_grid(player_stats, player_bpos, enemies, frame, player_sprite, b_w=b_w, b_h=b_h)
+        render_battle_grid(player_stats, player_bpos, enemies, frame, player_sprite, battle_width=battle_width, battle_height=battle_height)
 
         # phase transition when boss at 25% HP or below
         for e in enemies:
@@ -811,16 +836,16 @@ def fight_king_battle(player_stats, inventory, controller):
         if action is None:
             if last_move_time == 0.0 or now - last_move_time > MOVE_DELAY:
                 for e in enemies:
-                    old_x, old_y = e.get('b_x'), e.get('b_y')
-                    if e.get('b_x') > player_bpos['x']: e['b_x'] -= e['speed']
-                    elif e.get('b_x') < player_bpos['x']: e['b_x'] += e['speed']
-                    if e.get('b_y') > player_bpos['y']: e['b_y'] -= e['speed']
-                    elif e.get('b_y') < player_bpos['y']: e['b_y'] += e['speed']
-                    if e.get('b_x') == player_bpos['x'] and e.get('b_y') == player_bpos['y']:
-                        e['b_x'], e['b_y'] = old_x, old_y
+                    old_x, old_y = e.get('battle_x'), e.get('battle_y')
+                    if e.get('battle_x') > player_bpos['x']: e['battle_x'] -= e['speed']
+                    elif e.get('battle_x') < player_bpos['x']: e['battle_x'] += e['speed']
+                    if e.get('battle_y') > player_bpos['y']: e['battle_y'] -= e['speed']
+                    elif e.get('battle_y') < player_bpos['y']: e['battle_y'] += e['speed']
+                    if e.get('battle_x') == player_bpos['x'] and e.get('battle_y') == player_bpos['y']:
+                        e['battle_x'], e['battle_y'] = old_x, old_y
                 last_move_time = now
             for e in enemies:
-                dist = abs(e.get('b_x')-player_bpos['x']) + abs(e.get('b_y')-player_bpos['y'])
+                dist = abs(e.get('battle_x')-player_bpos['x']) + abs(e.get('battle_y')-player_bpos['y'])
                 if dist <= 1 and random.random() < 0.22:
                     dmg = max(0, e['attack'] - player_stats.get('defence',0))
                     player_stats['HP'] -= dmg
@@ -856,11 +881,11 @@ def fight_king_battle(player_stats, inventory, controller):
                 dx = {'left':-1,'right':1,'up':0,'down':0}[action]
                 dy = {'up':-1,'down':1,'left':0,'right':0}[action]
                 old_px, old_py = player_bpos['x'], player_bpos['y']
-                player_bpos['x'] = max(0, min(b_w-1, player_bpos['x'] + dx))
-                player_bpos['y'] = max(0, min(b_h-1, player_bpos['y'] + dy))
+                player_bpos['x'] = max(0, min(battle_width-1, player_bpos['x'] + dx))
+                player_bpos['y'] = max(0, min(battle_height-1, player_bpos['y'] + dy))
                 collided = False
                 for e in enemies:
-                    if int(e.get('b_x')) == int(player_bpos['x']) and int(e.get('b_y')) == int(player_bpos['y']):
+                    if int(e.get('battle_x')) == int(player_bpos['x']) and int(e.get('battle_y')) == int(player_bpos['y']):
                         collided = True; break
                 if collided:
                     player_bpos['x'], player_bpos['y'] = old_px, old_py
@@ -870,8 +895,8 @@ def fight_king_battle(player_stats, inventory, controller):
             if now - last_attack_time > ATTACK_DELAY:
                 alive = [e for e in enemies if e['HP'] > 0]
                 if alive:
-                    target = min(alive, key=lambda e: abs(e.get('b_x',0)-player_bpos['x']) + abs(e.get('b_y',0)-player_bpos['y']))
-                    dist = abs(target.get('b_x',0)-player_bpos['x']) + abs(target.get('b_y',0)-player_bpos['y'])
+                    target = min(alive, key=lambda e: abs(e.get('battle_x',0)-player_bpos['x']) + abs(e.get('battle_y',0)-player_bpos['y']))
+                    dist = abs(target.get('battle_x',0)-player_bpos['x']) + abs(target.get('battle_y',0)-player_bpos['y'])
                     if dist <= 1:
                         dmg = max(0, player_stats.get('attack',10) - target.get('defence',0))
                         target['HP'] -= dmg
@@ -941,9 +966,9 @@ def in_game_menu(player_stats, inventory, controller):
                             break
             if ch == "Fight King":
                 try:
-                    player_stats, inventory, gm = fight_king_battle(player_stats, inventory, controller)
+                    player_stats, inventory, game_mode = fight_king_battle(player_stats, inventory, controller)
                     # return to field after fight
-                    if gm:
+                    if game_mode:
                         return
                 except Exception as e:
                     print("Fight King failed:", e); input("Enter")
@@ -952,9 +977,9 @@ def in_game_menu(player_stats, inventory, controller):
             if ch == "Save":
                 save_game(player_stats, inventory, "field", [], controller); input("Enter")
             if ch == "Load":
-                p,inv,gm,tl = load_game(controller)
-                if inv is not None:
-                    inventory[:] = inv
+                p, inventory_data, game_mode, tl = load_game(controller)
+                if inventory_data is not None:
+                    inventory[:] = inventory_data
                 input("Enter")
             if ch == "MP3 Player":
                 mp3_player_menu(controller)
@@ -968,18 +993,18 @@ def battle_mode(player_stats, inventory, controller):
     # spawn a simple enemy; add walk sprite placeholder
     # Initialize battle positions separate from field coords
     # player battle position starts near bottom-center
-    b_w, b_h = BATTLE_W, BATTLE_H
-    player_bpos = {'x': b_w // 2, 'y': b_h - 2}
+    battle_width, battle_height = BATTLE_WIDTH, BATTLE_HEIGHT
+    player_bpos = {'x': battle_width // 2, 'y': battle_height - 2}
     enemies = [{
         'name': 'Shadow',
         'HP': 30,
         'attack': 8,
         'defence': 3,
         'speed': 1,
-        'b_x': min(b_w-2, player_bpos['x'] + 2),
-        'b_y': player_bpos['y'],
-        'size_x': 1,
-        'size_y': 1,
+        'battle_x': min(battle_width-2, player_bpos['x'] + 2),
+        'battle_y': player_bpos['y'],
+        'size_width': 1,
+        'size_height': 1,
         'walk': ['◈','◇'],   # placeholder frames
         'sprite': ['◈','◇'],
         'state': 'idle', 
@@ -1010,24 +1035,24 @@ def battle_mode(player_stats, inventory, controller):
             last_update = now
 
         # render 2D battle grid
-        render_battle_grid(player_stats, player_bpos, enemies, frame, player_sprite, b_w=b_w, b_h=b_h)
+        render_battle_grid(player_stats, player_bpos, enemies, frame, player_sprite, battle_width=battle_width, battle_height=battle_height)
 
         action = read_action()
         if action is None:
             # simulate enemies moving toward player slowly
             if last_move_time == 0.0 or now - last_move_time > MOVE_DELAY:
                 for e in enemies:
-                    old_x, old_y = e.get('b_x'), e.get('b_y')
-                    if e.get('b_x') > player_bpos['x']: e['b_x'] -= e['speed']
-                    elif e.get('b_x') < player_bpos['x']: e['b_x'] += e['speed']
-                    if e.get('b_y') > player_bpos['y']: e['b_y'] -= e['speed']
-                    elif e.get('b_y') < player_bpos['y']: e['b_y'] += e['speed']
-                    if e.get('b_x') == player_bpos['x'] and e.get('b_y') == player_bpos['y']:
-                        e['b_x'], e['b_y'] = old_x, old_y
+                    old_x, old_y = e.get('battle_x'), e.get('battle_y')
+                    if e.get('battle_x') > player_bpos['x']: e['battle_x'] -= e['speed']
+                    elif e.get('battle_x') < player_bpos['x']: e['battle_x'] += e['speed']
+                    if e.get('battle_y') > player_bpos['y']: e['battle_y'] -= e['speed']
+                    elif e.get('battle_y') < player_bpos['y']: e['battle_y'] += e['speed']
+                    if e.get('battle_x') == player_bpos['x'] and e.get('battle_y') == player_bpos['y']:
+                        e['battle_x'], e['battle_y'] = old_x, old_y
                 last_move_time = now
             # check enemy attacks
             for e in enemies:
-                dist = abs(e.get('b_x')-player_bpos['x']) + abs(e.get('b_y')-player_bpos['y'])
+                dist = abs(e.get('battle_x')-player_bpos['x']) + abs(e.get('battle_y')-player_bpos['y'])
                 if dist <= 1 and random.random() < 0.15:
                     dmg = max(0, e['attack'] - player_stats.get('defence',0))
                     player_stats['HP'] -= dmg
@@ -1042,8 +1067,8 @@ def battle_mode(player_stats, inventory, controller):
                         print(f"Earned {exp_gain} exp from {e['name']}.")
                     drop = e.get('drop')
                     if drop:
-                        dc = e.get('drop_chance', 50)
-                        prob = (dc / 100.0) if dc > 1 else float(dc)
+                        drop_chance = e.get('drop_chance', 50)
+                        prob = (drop_chance / 100.0) if drop_chance > 1 else float(drop_chance)
                         if random.random() < prob:
                             add_item(inventory, drop, qty=1)
                             print(f"{e['name']} dropped {drop}!")
@@ -1074,12 +1099,12 @@ def battle_mode(player_stats, inventory, controller):
                 dx = {'left':-1,'right':1,'up':0,'down':0}[action]
                 dy = {'up':-1,'down':1,'left':0,'right':0}[action]
                 old_px, old_py = player_bpos['x'], player_bpos['y']
-                player_bpos['x'] = max(0, min(b_w-1, player_bpos['x'] + dx))
-                player_bpos['y'] = max(0, min(b_h-1, player_bpos['y'] + dy))
+                player_bpos['x'] = max(0, min(battle_width-1, player_bpos['x'] + dx))
+                player_bpos['y'] = max(0, min(battle_height-1, player_bpos['y'] + dy))
                 # collision: if moved into enemy, revert
                 collided = False
                 for e in enemies:
-                    if int(e.get('b_x')) == int(player_bpos['x']) and int(e.get('b_y')) == int(player_bpos['y']):
+                    if int(e.get('battle_x')) == int(player_bpos['x']) and int(e.get('battle_y')) == int(player_bpos['y']):
                         collided = True
                         break
                 if collided:
@@ -1093,8 +1118,8 @@ def battle_mode(player_stats, inventory, controller):
                 alive = [e for e in enemies if e['HP'] > 0]
                 if alive:
                     # choose nearest by battle coordinates
-                    target = min(alive, key=lambda e: abs(e.get('b_x',0)-player_bpos['x']) + abs(e.get('b_y',0)-player_bpos['y']))
-                    dist = abs(target.get('b_x',0)-player_bpos['x']) + abs(target.get('b_y',0)-player_bpos['y'])
+                    target = min(alive, key=lambda e: abs(e.get('battle_x',0)-player_bpos['x']) + abs(e.get('battle_y',0)-player_bpos['y']))
+                    dist = abs(target.get('battle_x',0)-player_bpos['x']) + abs(target.get('battle_y',0)-player_bpos['y'])
                     if dist <= 1:
                         dmg = max(0, player_stats.get('attack',10) - target.get('defence',0))
                         target['HP'] -= dmg
@@ -1181,15 +1206,15 @@ def main():
     loaded_inv = None
     loaded_gm = None
     if choice == 1:
-        p, inv, gm, tl = load_game(controller)
+        p, inventory_data, game_mode, tl = load_game(controller)
         if p:
             # Ensure loaded player has max_hp and cap HP to max
             p.setdefault('max_hp', p.get('HP', 120))
             if p.get('HP', 0) > p['max_hp']:
                 p['HP'] = p['max_hp']
             player_stats.update(p)
-        loaded_inv = inv
-        loaded_gm = gm
+        loaded_inv = inventory_data
+        loaded_gm = game_mode
     elif choice == 2:
         mp3_player_menu(controller)
     elif choice == 3:
