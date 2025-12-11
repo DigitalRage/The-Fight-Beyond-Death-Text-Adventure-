@@ -816,7 +816,7 @@ def fight_king_battle(player_stats, inventory, controller):
     player_level = player_stats.get('Level', 1)
     boss_max = 2000 + (player_level * 50)  # Scales: level 1 = 2050, level 99 = 7050
     king_attack = 40 + (player_level * 0.4)  # Scales: level 1 = 40.4, level 99 = 79.6
-    king_defence = 20 + (player_level * 0.2)  # Scales: level 1 = 20.2, level 99 = 39.8
+    king_defence = 10 + (player_level * 0.001)  # Scales: level 1 = 20.2, level 99 = 39.8
     
     boss = {
         'name': 'King', 'HP': boss_max, 'max_HP': boss_max, 'attack': king_attack, 'defence': king_defence, 'speed': 1,
@@ -1217,7 +1217,8 @@ def main():
         "town": "Twilight Town.wav",
         "destiny": "Destiny Islands.wav", 
         "final1": "KH-CoM Final Battle1.wav",
-        "final2": "KH-CoM Final Battle2.wav"
+        "final2": "KH-CoM Final Battle2.wav", 
+        "BoyTrousle": "BoyTrousle.wav"
     }
     tracks = {}
     for k, fname in requested.items():
