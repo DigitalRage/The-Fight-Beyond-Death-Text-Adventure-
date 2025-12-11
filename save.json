@@ -2,7 +2,7 @@
   "player_stats": {
     "x": 46,
     "y": 31,
-    "HP": 105,
+    "HP": 120,
     "max_hp": 120,
     "attack": 12,
     "defence": 5,
@@ -12,7 +12,11 @@
     "munny": 0,
     "items": []
   },
-  "inventory": [],
+  "inventory": [
+    {"name": "potion", "count": 99},
+    {"name": "hi-potion", "count": 5},
+    {"name": "ether", "count": 10}
+  ],
   "game_mode": "field",
   "tiles": [],
   "current_track": "town"
