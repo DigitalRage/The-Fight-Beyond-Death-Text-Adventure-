@@ -379,9 +379,9 @@ def tutorial_mode():
     print("=== TUTORIAL ===")
     print("\n1. MAP IDENTIFIERS:")
     print("   @ = Boss (Guardian) - collect 9 ancient fragments, combine into Ancient Cypher")
-    print("   C = Chest")
-    print("   N = NPC")
-    print("   D = Door")
+    print("   C = Chest (not implemented)")
+    print("   N = NPC (not implemented)")
+    print("   D = Door (not implemented)")
     print("   # = Wall (cannot pass)")
     print("   ⇩ = Your Player")
     input("\nPress Enter to continue...")
@@ -397,7 +397,7 @@ def tutorial_mode():
     print("   Space  - Attack (adjacent enemies only)")
     print("   1, 2, 3 - Use item from slot 1, 2, or 3")
     print("\nGeneral:")
-    print("   I      - Interact with tile")
+    print("   I      - Interact with tile (not implemented)")
     print("   P      - Pause/Resume")
     print("   M      - Open menu (Items, Save, Load, Status, Fight King)")
     print("   = / -  - Next/Previous music track")
@@ -521,7 +521,7 @@ def start_menu():
     #  - Move selection using arrow keys, confirm with Enter
     #  - If Tutorial selected, run tutorial and return to menu
     #  - Otherwise return the selected menu index for dispatch
-    opts = ["Start New Game", "Load Saved Game", "Tutorial", "MP3 Player", "Quit"]
+    opts = ["Start New Game", "Load Saved Game", "TUTORIAL", "MP3 Player", "Quit"]
     sel = 0
     while True:
         os.system("cls")
@@ -816,7 +816,7 @@ def fight_king_battle(player_stats, inventory, controller):
     player_level = player_stats.get('Level', 1)
     boss_max = 2000 + (player_level * 50)  # Scales: level 1 = 2050, level 99 = 7050
     king_attack = 40 + (player_level * 0.4)  # Scales: level 1 = 40.4, level 99 = 79.6
-    king_defence = 10 + (player_level * 0.001)  # Scales: level 1 = 20.2, level 99 = 39.8
+    king_defence = (0)  # Scales: level 1 = 20.2, level 99 = 39.8
     
     boss = {
         'name': 'King', 'HP': boss_max, 'max_HP': boss_max, 'attack': king_attack, 'defence': king_defence, 'speed': 1,
