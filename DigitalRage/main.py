@@ -141,6 +141,10 @@ def music_prev(controller):
         fn()
 
 def music_list(controller):
+    # Show available music tracks using the controller's list method
+    # Steps:
+    #  - Try to call a controller-provided method for listing tracks
+    #  - If available, rely on controller to display or print the list
     fn = _call(controller, "list_tracks", "list")
     if fn:
         fn()
@@ -189,6 +193,10 @@ def locate_music_file(filename, base_directory):
 
 # --- Map / Tiles ---
 def setup_tile(tiles, tile_id, x, y):
+    # Create and append a tile entry to the tiles list at given coordinates
+    # Steps:
+    #  - Create dict with tile id and coordinates, then append
+    #  - Return the modified tiles list for convenience
     tiles.append({'id': tile_id, 'x': x, 'y': y})
     return tiles
 
@@ -200,11 +208,11 @@ def get_tile_id(x_pos, y_pos, tiles):
     return "empty"
 
 def check_collision(x_pos, y_pos, tiles):
-    # Pseudocode: Return True if tile at position is passable (not wall/blocked)
+    # Return True if tile at position is passable (not wall/blocked)
     return get_tile_id(x_pos, y_pos, tiles) not in ("wall", "blocked")
 
 def render_map(map_data, player_x, player_y, player_stats=None):
-    # Pseudocode: Clear screen, draw map grid with player marker overlaid, display UI info
+    # Clear screen, draw map grid with player marker overlaid, display UI info
     os.system("cls")
     if not map_data or len(map_data) == 0:
         print("[No map data]")
@@ -229,6 +237,10 @@ def render_map(map_data, player_x, player_y, player_stats=None):
 
 # --- Save/Load ---
 def save_game(player_stats, inventory, game_mode, tiles, controller, save_file=SAVE_FILE):
+    # Save current game state to disk
+    # Steps:
+    #  - Serialize player stats, inventory, game mode, tiles, and currently playing track
+    #  - Write JSON to the save file, handle exceptions
     data = {
         "player_stats": player_stats,
         "inventory": inventory,
@@ -244,6 +256,10 @@ def save_game(player_stats, inventory, game_mode, tiles, controller, save_file=S
         print("Save error:", e)
 
 def load_game(controller, save_file=SAVE_FILE):
+    # Load game state from disk
+    # Steps:
+    #  - Attempt to open save file and parse JSON
+    #  - Extract player stats, inventory, tiles, and last track and return them
     try:
         with open(save_file, "r", encoding="utf-8") as f:
             data = json.load(f)
@@ -263,13 +279,13 @@ def load_game(controller, save_file=SAVE_FILE):
 
 # --- Leveling system ---
 def exp_needed_for_level(level):
-    # Pseudocode: Calculate exponential experience requirement: 100 * 1.2^(level-1)
+    # Calculate exponential experience requirement: 100 * 1.2^(level-1)
     if level <= 1:
         return 0
     return int(100 * (1.2 ** (level - 1)))
 
 def check_level_up(player_stats):
-    # Pseudocode: Check if current exp >= next level threshold. If so: increment level, recalculate attack/defence stats, show message
+    # Check if current exp >= next level threshold. If so: increment level, recalculate attack/defence stats, show message
     current_level = player_stats.get('Level', 1)
     current_exp = player_stats.get('exp', 0)
     next_exp_needed = exp_needed_for_level(current_level + 1)
@@ -291,7 +307,7 @@ def check_level_up(player_stats):
 
 # --- Items / usage ---
 def use_item(player_stats, inventory, item_name, items_db=None):
-    # Pseudocode: Find item in inventory, apply effect (heal/level), remove if consumable, return success status
+    # Find item in inventory, apply effect (heal/level), remove if consumable, return success status
     items_db = items_db or ITEMS
     # Inventory format: list of {'name': str, 'count': int}
     entry = None
@@ -358,7 +374,7 @@ def mp3_player_menu(controller):
 
 def tutorial_mode():
     # Interactive tutorial showing controls, map identifiers, menus, and test battle.
-    # Pseudocode: Walk player through controls, menu items, and run a minimal test battle
+    # Walk player through controls, menu items, and run a minimal test battle
     os.system("cls")
     print("=== TUTORIAL ===")
     print("\n1. MAP IDENTIFIERS:")
@@ -499,6 +515,12 @@ def tutorial_mode():
             return
 
 def start_menu():
+    # Main title menu displayed at startup. Handles navigation and selection.
+    # Steps:
+    #  - Render options and highlight the current selection
+    #  - Move selection using arrow keys, confirm with Enter
+    #  - If Tutorial selected, run tutorial and return to menu
+    #  - Otherwise return the selected menu index for dispatch
     opts = ["Start New Game", "Load Saved Game", "Tutorial", "MP3 Player", "Quit"]
     sel = 0
     while True:
@@ -531,7 +553,7 @@ def render_battle(player_stats, enemies, frame_index, player_sprite):
         print(f" - {e['name']} HP:{e.get('HP')} pos:({e.get('battle_x')},{e.get('battle_y')})")
 
 def render_battle_grid(player_stats, player_bpos, enemies, frame_index, player_sprite, battle_width=BATTLE_WIDTH, battle_height=BATTLE_HEIGHT):
-    # Pseudocode: Clear screen, create battle grid, place enemies and player sprites, display positions
+    # Clear screen, create battle grid, place enemies and player sprites, display positions
     os.system("cls")
     grid = [[" " for _ in range(battle_width)] for _ in range(battle_height)]
     # place enemies first so player can potentially overwrite
@@ -568,7 +590,7 @@ def render_battle_grid(player_stats, player_bpos, enemies, frame_index, player_s
 # --- Modes ---
 def field_mode(player_stats, inventory, tiles, controller, map_data):
     # Field mode: explore map, encounter battles, interact with tiles.
-    # Pseudocode: Render map, handle input for movement/interact/menu, trigger battles/bosses, save steps
+    # Render map, handle input for movement/interact/menu, trigger battles/bosses, save steps
     # auto-music
     if 'town' in controller.tracks and getattr(controller, "current_track", None) != 'town':
         music_play(controller, 'town')
@@ -646,7 +668,7 @@ def field_mode(player_stats, inventory, tiles, controller, map_data):
 # --- Boss and Fragment Functions ---
 def combine_fragments(inventory):
     # Combine 9 ancient fragments into an Ancient Cypher.
-    # Pseudocode: Count fragments in inventory; if >=9 remove 9 and add Ancient Cypher
+    # Count fragments in inventory; if >=9 remove 9 and add Ancient Cypher
     frag_name = 'ancient_fragment'
     count = 0
     for it in inventory:
@@ -660,7 +682,7 @@ def combine_fragments(inventory):
 
 
 def mini_boss_battle(player_stats, inventory, controller, boss_pos=None, tiles=None):
-    # Pseudocode: Initialize mini-boss battle, manage combat loop until boss defeated or player dies
+    # Initialize mini-boss battle, manage combat loop until boss defeated or player dies
     battle_width, battle_height = BATTLE_WIDTH, BATTLE_HEIGHT
     player_bpos = {'x': battle_width // 2, 'y': battle_height - 2}
     boss = {
@@ -786,7 +808,7 @@ def mini_boss_battle(player_stats, inventory, controller, boss_pos=None, tiles=N
 
 
 def fight_king_battle(player_stats, inventory, controller):
-    # Pseudocode: Initialize King boss fight with level-scaling stats, handle phase transition at 25% HP, manage music switching
+    # Initialize King boss fight with level-scaling stats, handle phase transition at 25% HP, manage music switching
     battle_width, battle_height = BATTLE_WIDTH, BATTLE_HEIGHT
     player_bpos = {'x': battle_width // 2, 'y': battle_height - 2}
     
@@ -917,6 +939,10 @@ def fight_king_battle(player_stats, inventory, controller):
 
 
 def in_game_menu(player_stats, inventory, controller):
+    # In-game menu: pause-like menu for inventory, saves, and special commands
+    # Steps:
+    #  - Display menu options and allow navigation via arrows
+    #  - Enter opens the chosen submenu or executes the selected command
     opts = ["Resume", "Items", "Fight King", "Tutorial", "Save", "Load", "MP3 Player", "Status", "Quit to Title"]
     sel = 0
     while True:
@@ -1147,7 +1173,11 @@ def battle_mode(player_stats, inventory, controller):
 
 # --- Main ---
 def main():
-    # Use map from maps.py
+    # Main entry point: initialize game map and state, music, and run main game loop
+    # Steps:
+    #  - Build a mutable map from the map definitions in maps.py and insert boss markers
+    #  - Initialize player stats, inventory, tiles and preload music via the MusicController
+    #  - Open the start menu and then dispatch to field/battle/end game modes in a loop
     # create a mutable copy of the map and insert 9 boss markers '@'
     raw_map = list(map1)
     map_h = len(raw_map)
