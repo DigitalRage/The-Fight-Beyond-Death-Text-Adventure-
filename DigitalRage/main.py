@@ -1200,7 +1200,7 @@ def main():
     map_h = len(raw_map)
     map_w = len(raw_map[0]) if map_h > 0 else 0
     # positions chosen as proportional offsets to fit arbitrary map sizes
-    fractions = [(0.08,0.08),(0.30,0.12),(0.55,0.18),(0.78,0.22),(0.12,0.45),(0.35,0.58),(0.58,0.66),(0.78,0.78),(0.88,0.9)]
+    fractions = [(0.08,0.08),(0.30,0.12),(0.55,0.18),(0.78,0.22),(0.12,0.45),(0.35,0.58),(0.58,0.66),(0.78,0.78),(0.88,0.9),(0.14,0.85)]
     for fx, fy in fractions:
         if map_w == 0 or map_h == 0:
             break
