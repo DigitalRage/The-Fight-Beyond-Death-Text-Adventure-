@@ -358,10 +358,15 @@ def mp3_player_menu(controller):
     idx = 0
     while True:
         os.system("cls")
-        print("=== MP3 Player ===")
+        print("=== Music Player (WAV/MP3) ===")
         for i, n in enumerate(names):
             print(f"{'> ' if i==idx else '  '}{n}")
-        print("Enter = play, Esc = exit, arrows to move")
+        print("Enter = play, p = pause/resume, s = stop, +/- = next/prev, Esc = exit, arrows to move")
+        # show current status
+        if hasattr(controller, 'current_track'):
+            ct = getattr(controller, 'current_track') or 'stopped'
+            paused = getattr(controller, 'is_paused', False)
+            print(f"Current: {ct}{' (paused)' if paused else ''}")
         k = msvcrt.getch()
         if k == b'\xe0':
             k2 = msvcrt.getch()
@@ -369,6 +374,18 @@ def mp3_player_menu(controller):
             elif k2 == b'P': idx = (idx+1) % len(names)
         elif k == b'\r':
             music_play(controller, names[idx])
+        elif k in (b'p', b'P'):
+            # toggle pause/resume depending on paused flag
+            if getattr(controller, 'is_paused', False):
+                music_resume(controller)
+            else:
+                music_pause(controller)
+        elif k in (b's', b'S'):
+            music_stop(controller)
+        elif k in (b'=', b'+'):
+            music_next(controller)
+        elif k in (b'-', b'_'):
+            music_prev(controller)
         elif k == b'\x1b':
             break
 
@@ -412,7 +429,7 @@ def tutorial_mode():
     print("   Tutorial  - View this tutorial again")
     print("   Save      - Save your game")
     print("   Load      - Load your last save")
-    print("   MP3 Player - Play music tracks")
+    print("   Music Player - Play WAV/MP3 tracks")
     print("   Status    - View stats (Level, HP, EXP, Attack, Defence)")
     print("   Quit to Title - Return to main menu")
     input("\nPress Enter to continue...")
@@ -521,7 +538,7 @@ def start_menu():
     #  - Move selection using arrow keys, confirm with Enter
     #  - If Tutorial selected, run tutorial and return to menu
     #  - Otherwise return the selected menu index for dispatch
-    opts = ["Start New Game", "Load Saved Game", "TUTORIAL", "MP3 Player", "Quit"]
+    opts = ["Start New Game", "Load Saved Game", "TUTORIAL", "Music Player (WAV/MP3)", "Quit"]
     sel = 0
     while True:
         os.system("cls")
@@ -943,7 +960,7 @@ def in_game_menu(player_stats, inventory, controller):
     # Steps:
     #  - Display menu options and allow navigation via arrows
     #  - Enter opens the chosen submenu or executes the selected command
-    opts = ["Resume", "Items", "Fight King", "Tutorial", "Save", "Load", "MP3 Player", "Status", "Quit to Title"]
+    opts = ["Resume", "Items", "Fight King", "Tutorial", "Save", "Load", "Music Player (WAV/MP3)", "Status", "Quit to Title"]
     sel = 0
     while True:
         os.system("cls")
@@ -1007,7 +1024,7 @@ def in_game_menu(player_stats, inventory, controller):
                 if inventory_data is not None:
                     inventory[:] = inventory_data
                 input("Enter")
-            if ch == "MP3 Player":
+            if ch == "Music Player (WAV/MP3)":
                 mp3_player_menu(controller)
             if ch == "Status":
                 print(player_stats); input("Enter")
@@ -1218,7 +1235,8 @@ def main():
         "destiny": "Destiny Islands.wav", 
         "final1": "KH-CoM Final Battle1.wav",
         "final2": "KH-CoM Final Battle2.wav", 
-        "BoyTrousle": "BoyTrousle.wav"
+        "BoyTrousle": "BoyTrousle.wav", 
+        "BerginFriend": "Asgore.wav"
     }
     tracks = {}
     for k, fname in requested.items():
@@ -1236,6 +1254,9 @@ def main():
     choice = start_menu()
     loaded_inv = None
     loaded_gm = None
+    # Map returned index to action:
+    # 0 = Start New Game, 1 = Load Saved Game, 2 = TUTORIAL (handled in start_menu),
+    # 3 = Music Player, 4 = Quit
     if choice == 1:
         p, inventory_data, game_mode, tl = load_game(controller)
         if p:
@@ -1246,9 +1267,9 @@ def main():
             player_stats.update(p)
         loaded_inv = inventory_data
         loaded_gm = game_mode
-    elif choice == 2:
-        mp3_player_menu(controller)
     elif choice == 3:
+        mp3_player_menu(controller)
+    elif choice == 4:
         print("Goodbye."); return
 
     # main loop simple dispatcher

@@ -41,10 +41,13 @@ class MusicController:
 
         self._powershell = shutil.which("powershell") or shutil.which("powershell.exe")
 
-    def _is_wav(self, path):
+    def _is_supported(self, path):
         # 1) Confirm the input is a string.
-        # 2) Check that the file extension ends with .wav (case-insensitive).
-        return isinstance(path, str) and path.lower().endswith('.wav')
+        # 2) Check for supported audio extensions: .wav and .mp3 (case-insensitive).
+        if not isinstance(path, str):
+            return False
+        lower = path.lower()
+        return lower.endswith('.wav') or lower.endswith('.mp3')
 
     def _find_by_basename(self, basename):
         # 1) Search two places: the directory of this script and the current working directory.
@@ -92,7 +95,18 @@ class MusicController:
             print("PowerShell not found.")
             return None
         safe = path.replace("'", "''")
-        ps_script = f"& {{ $p = New-Object System.Media.SoundPlayer '{safe}'; $p.Load(); $p.PlayLooping(); Start-Sleep -Seconds 999999 }}"
+        # If WAV: continue using System.Media.SoundPlayer for looping
+        if path.lower().endswith('.wav'):
+            ps_script = f"& {{ $p = New-Object System.Media.SoundPlayer '{safe}'; $p.Load(); $p.PlayLooping(); Start-Sleep -Seconds 999999 }}"
+        else:
+            # For MP3 and other supported formats, use WPF MediaPlayer.
+            # Attach MediaEnded event to loop automatically.
+            # Note: we use doubled braces to escape literal braces in f-strings
+            ps_script = (
+                "& { Add-Type -AssemblyName presentationCore; $mm = New-Object System.Windows.Media.MediaPlayer; "
+                f"$uri = New-Object System.Uri('{safe}'); $mm.Open($uri); $mm.add_MediaEnded({{ $mm.Position = [TimeSpan]::Zero; $mm.Play() }}); $mm.Play(); "
+                "while ($true) { Start-Sleep -Seconds 10 } }"
+            )
         try:
             proc = subprocess.Popen(
                 [self._powershell, "-NoProfile", "-WindowStyle", "Hidden", "-Command", ps_script],
@@ -129,8 +143,8 @@ class MusicController:
             else:
                 print(f"File not found for '{name}': {path}")
                 return
-        if not self._is_wav(path):
-            print("Only WAV supported:", path)
+        if not self._is_supported(path):
+            print("Only WAV/MP3 supported:", path)
             return
         self._stop_proc("_ps_proc")
         proc = self._launch_ps_loop(path, "main")
@@ -217,8 +231,8 @@ class MusicController:
         if not os.path.exists(path):
             print(f"File not found for '{name}': {path}")
             return
-        if not self._is_wav(path):
-            print("Only WAV supported:", path)
+        if not self._is_supported(path):
+            print("Only WAV/MP3 supported:", path)
             return
         self._stop_proc("_ps_proc1")
         proc = self._launch_ps_loop(path, "1")
@@ -301,8 +315,8 @@ class MusicController:
         if not os.path.exists(path):
             print(f"File not found for '{name}': {path}")
             return
-        if not self._is_wav(path):
-            print("Only WAV supported:", path)
+        if not self._is_supported(path):
+            print("Only WAV/MP3 supported:", path)
             return
         self._stop_proc("_ps_proc2")
         proc = self._launch_ps_loop(path, "2")
@@ -384,8 +398,8 @@ class MusicController:
         if not os.path.exists(path):
             print(f"File not found for '{name}': {path}")
             return
-        if not self._is_wav(path):
-            print("Only WAV supported:", path)
+        if not self._is_supported(path):
+            print("Only WAV/MP3 supported:", path)
             return
         self._stop_proc("_ps_proc3")
         proc = self._launch_ps_loop(path, "3")
