@@ -7,8 +7,14 @@ import time
 import random
 import msvcrt
 import json
-from music_controller import MusicController
-from maps import map1
+try:
+    from .music_controller import MusicController
+except Exception:
+    from music_controller import MusicController
+try:
+    from .maps import map1
+except Exception:
+    from maps import map1
 
 SAVE_FILE = "save.json"
 
@@ -469,7 +475,7 @@ def tutorial_mode():
         'battle_x': 30, 'battle_y': 25, 'size_width': 1, 'size_height': 1,
         'sprite': ['◻'], 'exp': 0, 'drop': None, 'drop_chance': 0
     }]
-    test_sprite = {'walk': ['⇩','↧'], 'frames':['⇩','↧']}
+    test_sprite = {'walk': ['⇩','↧'], 'frames':['⇩','↧','@']}
     
     frame = 0
     last_update = time.time()
@@ -531,31 +537,50 @@ def tutorial_mode():
             time.sleep(2)
             return
 
-def start_menu():
-    # Main title menu displayed at startup. Handles navigation and selection.
-    # Steps:
-    #  - Render options and highlight the current selection
-    #  - Move selection using arrow keys, confirm with Enter
-    #  - If Tutorial selected, run tutorial and return to menu
-    #  - Otherwise return the selected menu index for dispatch
-    opts = ["Start New Game", "Load Saved Game", "TUTORIAL", "Music Player (WAV/MP3)", "Quit"]
+
+def menu_select(title, opts):
+    # Generic menu renderer that returns the selected index (Enter) or None (Esc)
+    # Accepts an optional input function (defaults to `msvcrt.getch`) to aid testing.
     sel = 0
+    def _getch():
+        return msvcrt.getch()
     while True:
         os.system("cls")
-        print("=== The Fight Beyond Death ===")
-        for i,o in enumerate(opts):
+        print(f"=== {title} ===")
+        for i, o in enumerate(opts):
             print(f"{'> ' if i==sel else '  '}{o}")
-        k = msvcrt.getch()
+        k = _getch()
         if k == b'\xe0':
-            k2 = msvcrt.getch()
+            k2 = _getch()
             if k2 == b'H': sel = (sel-1) % len(opts)
             elif k2 == b'P': sel = (sel+1) % len(opts)
         elif k == b'\r':
-            if sel == 2:  # Tutorial
-                tutorial_mode()
-                # Loop back to menu after tutorial
-            else:
-                return sel
+            return sel
+        elif k == b'\x1b':
+            return None
+
+
+def wait_enter(prompt="Enter to continue"):
+    # Small helper to centralize pause prompts and make tests simpler to monkeypatch
+    try:
+        input(prompt)
+    except Exception:
+        # In non-interactive tests input may raise; ignore to allow automation
+        pass
+
+def start_menu():
+    # Main title menu displayed at startup. Handles navigation and selection.
+    # Uses `menu_select()` helper to reduce duplicated menu rendering logic.
+    opts = ["Start New Game", "Load Saved Game", "TUTORIAL", "Music Player (WAV/MP3)", "Quit"]
+    while True:
+        sel = menu_select("The Fight Beyond Death", opts)
+        if sel is None:
+            continue
+        if sel == 2:  # Tutorial
+            tutorial_mode()
+            continue
+        return sel
+
 
 
 
@@ -961,76 +986,59 @@ def in_game_menu(player_stats, inventory, controller):
     #  - Display menu options and allow navigation via arrows
     #  - Enter opens the chosen submenu or executes the selected command
     opts = ["Resume", "Items", "Fight King", "Tutorial", "Save", "Load", "Music Player (WAV/MP3)", "Status", "Quit to Title"]
-    sel = 0
     while True:
-        os.system("cls")
-        print("=== Menu ===")
-        for i,o in enumerate(opts):
-            print(f"{'> ' if i==sel else '  '}{o}")
-        k = msvcrt.getch()
-        if k == b'\xe0':
-            k2 = msvcrt.getch()
-            if k2 == b'H': sel = (sel-1) % len(opts)
-            elif k2 == b'P': sel = (sel+1) % len(opts)
-        elif k == b'\r':
-            ch = opts[sel]
-            if ch == "Resume":
-                return
-            if ch == "Items":
-                # Interactive inventory: arrows to choose, Enter to use, Esc to exit
-                if not inventory:
-                    print("Inventory: empty"); input("Enter to continue")
+        sel = menu_select("Menu", opts)
+        if sel is None:
+            return
+        ch = opts[sel]
+        if ch == "Resume":
+            return
+        if ch == "Items":
+            # Interactive inventory: use the generic `menu_select` for navigation
+            if not inventory:
+                print("Inventory: empty"); input("Enter to continue")
+            else:
+                names = [it.get('name') if isinstance(it, dict) else str(it) for it in inventory]
+                sel = menu_select("Items", names)
+                if sel is None:
+                    pass
                 else:
-                    idx = 0
-                    while True:
-                        os.system("cls")
-                        print("=== Items ===")
-                        for i, it in enumerate(inventory):
-                            name = it.get('name') if isinstance(it, dict) else str(it)
-                            cnt = it.get('count', 1) if isinstance(it, dict) else 1
-                            print(f"{'> ' if i==idx else '  '}{name} x{cnt}")
-                        print("Enter=use, Esc=exit, arrows to move")
-                        k = msvcrt.getch()
-                        if k == b'\xe0':
-                            k2 = msvcrt.getch()
-                            if k2 == b'H': idx = (idx-1) % len(inventory)
-                            elif k2 == b'P': idx = (idx+1) % len(inventory)
-                        elif k == b'\r':
-                            # inventory entries are stacked dicts
-                            entry = inventory[idx]
-                            item_name = entry.get('name') if isinstance(entry, dict) else str(entry)
-                            used = use_item(player_stats, inventory, item_name, ITEMS)
-                            input("Enter to continue")
-                            if used:
-                                if not inventory:
-                                    break
-                                idx = min(idx, len(inventory)-1)
-                        elif k == b'\x1b':
-                            break
-            if ch == "Fight King":
-                try:
-                    player_stats, inventory, game_mode = fight_king_battle(player_stats, inventory, controller)
-                    # return to field after fight
-                    if game_mode:
-                        return
-                except Exception as e:
-                    print("Fight King failed:", e); input("Enter")
-            if ch == "Tutorial":
-                tutorial_mode()
-            if ch == "Save":
-                save_game(player_stats, inventory, "field", [], controller); input("Enter")
-            if ch == "Load":
-                p, inventory_data, game_mode, tl = load_game(controller)
-                if inventory_data is not None:
-                    inventory[:] = inventory_data
-                input("Enter")
-            if ch == "Music Player (WAV/MP3)":
-                mp3_player_menu(controller)
-            if ch == "Status":
-                print(player_stats); input("Enter")
-            if ch == "Quit to Title":
-                music_stop(controller)
-                raise SystemExit("ReturnToTitle")
+                    entry = inventory[sel]
+                    item_name = entry.get('name') if isinstance(entry, dict) else str(entry)
+                    used = use_item(player_stats, inventory, item_name, ITEMS)
+                    wait_enter("Enter to continue")
+        if ch == "Fight King":
+            try:
+                player_stats, inventory, game_mode = fight_king_battle(player_stats, inventory, controller)
+                # return to field after fight
+                if game_mode:
+                    return
+            except Exception as e:
+                print("Fight King failed:", e); wait_enter("Enter to continue")
+        if ch == "Tutorial":
+            tutorial_mode()
+        if ch == "Save":
+            save_game(player_stats, inventory, "field", [], controller); wait_enter("Enter to continue")
+        if ch == "Load":
+            p, inventory_data, game_mode, tl = load_game(controller)
+            if p:
+                # Normalize loaded values and cap HP to max_hp
+                p.setdefault('max_hp', p.get('HP', 120))
+                if p.get('HP', 0) > p['max_hp']:
+                    p['HP'] = p['max_hp']
+                # Update the provided dict in-place so callers see the changes
+                player_stats.clear()
+                player_stats.update(p)
+            if inventory_data is not None:
+                inventory[:] = inventory_data
+            wait_enter("Enter to continue")
+        if ch == "Music Player (WAV/MP3)":
+            mp3_player_menu(controller)
+        if ch == "Status":
+            print(player_stats); wait_enter("Enter to continue")
+        if ch == "Quit to Title":
+            music_stop(controller)
+            raise SystemExit("ReturnToTitle")
 
 def battle_mode(player_stats, inventory, controller):
     # spawn a simple enemy; add walk sprite placeholder
