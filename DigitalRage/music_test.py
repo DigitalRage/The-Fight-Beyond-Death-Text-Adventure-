@@ -20,7 +20,9 @@ def locate_music_file(name, base_dir):
 requested = {
     "battle": "Organization Battle.wav",
     "town": "Twilight Town.wav",
-    "destiny": "Destiny Islands.wav"
+    "destiny": "Destiny Islands.wav",
+    "final1": "KH-CoM Final Battle1.wav",
+    "final2": "KH-CoM Final Battle2.wav",
 }
 
 tracks = {}
@@ -39,6 +41,7 @@ print("Commands:")
 print("  play <name>, pause, resume, stop, next, prev, status")
 print("  play1 <name>, pause1, resume1, stop1, next1, prev1")
 print("  play2 <name>, pause2, resume2, stop2, next2, prev2")
+print("  play3 <name>, pause3, resume3, stop3, next3, prev3")
 print("  list, status, quit")
 
 def status():
